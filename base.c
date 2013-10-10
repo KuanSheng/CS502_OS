@@ -144,7 +144,31 @@ typedef struct PCB{
 
 		
  }
+ int os_get_process_id(char *name){
+	 int i = 0;
+	 PCB *head = readyfront;
 
+	 if(name == ""){
+		     Z502_REG9 = ERR_SUCCESS;
+			 return(0);
+	    }
+	 else while(head!=0){
+		 if(strcmp(head->Processname,name) == 0){
+			 i = 1;
+			 break;
+		 }
+		 else 
+			 head = head->next;
+		  }
+
+	 if(i == 1){
+		 return( head->pid );
+		 Z502_REG9 = ERR_SUCCESS;
+	 }
+	 else 
+		 printf("can not find the process\n");
+	   
+ }
 //create process;    
     
 void    os_create_process( char* process_name, void* scontext, long Prio ) {
@@ -154,9 +178,10 @@ void    os_create_process( char* process_name, void* scontext, long Prio ) {
         pcb->status = 0;
         pcb->Priority = Prio;
         pcb->context = scontext;
+		pcb->pid = Pid;
+		Pid++;
         Z502MakeContext( &next_context, pcb->context, USER_MODE );
         Z502SwitchContext( SWITCH_CONTEXT_KILL_MODE, &next_context );
-        free(pcb);
 }
 
 void start_timer( int delaytime ){
@@ -245,32 +270,36 @@ void    svc( SYSTEM_CALL_DATA *SystemCallData ) {
              printf( "Arg %d: Contents = (Decimal) %8ld,  (Hex) %8lX\n", i,
              (unsigned long )SystemCallData->Argument[i],
              (unsigned long )SystemCallData->Argument[i]);
-        }
+		}}
         switch(call_type){
         case SYSNUM_GET_TIME_OF_DAY:
                MEM_READ(Z502ClockStatus, &Time);
-			   Z502_REG1=Time;
-               //*SystemCallData->Argument[0]=Time;
+			   //Z502_REG1=Time;
+               *SystemCallData->Argument[0]=Time;
                break;
         
         case SYSNUM_TERMINATE_PROCESS:
               tmpid = (long)SystemCallData->Argument[0];
+			  if(tmpid>=0){
 			  os_delete_process_ready(tmpid);
-			  Z502_REG9 = ERR_SUCCESS;
+			  Z502_REG9 = ERR_SUCCESS;}
+			  else 
+			  Z502Halt();
 			  break;
               //the execution of sleep();
         case SYSNUM_SLEEP:
              start_timer( (int)SystemCallData->Argument[0] );
 
              break;
-             
+		case SYSNUM_GET_PROCESS_ID:
+			*SystemCallData->Argument[1] = os_get_process_id((char *)SystemCallData->Argument[0]); 
+			break;
         case SYSNUM_CREATE_PROCESS:
              strcpy(pcb->Processname , (char *)SystemCallData->Argument[0]);
              pcb->Priority = (long)SystemCallData->Argument[2];
-             
+             if(Pid < 9){
              if(pcb->Priority >0){
-			
-             if(readyfront == NULL&&readyrear == NULL){
+		       if(readyfront == NULL&&readyrear == NULL){
                  readyfront = pcb;
                  readyrear = pcb;
                  //*SystemCallData->Argument[4] = ERR_SUCCESS;
@@ -280,9 +309,9 @@ void    svc( SYSTEM_CALL_DATA *SystemCallData ) {
 				 *SystemCallData->Argument[3] = Pid;
 				 Pid++;
                  }
-             else if(readyfront!=NULL&&readyrear!=NULL){
-				 if(checkPCBname(pcb) == 1)
-                  {readyrear->next = pcb;
+               else if(readyfront!=NULL&&readyrear!=NULL){
+				 if(checkPCBname(pcb) == 1){
+					  readyrear->next = pcb;
                   //*SystemCallData->Argument[4] = ERR_SUCCESS;
                   Z502_REG9 = ERR_SUCCESS;
 				  pcb->pid = Pid;
@@ -292,11 +321,11 @@ void    svc( SYSTEM_CALL_DATA *SystemCallData ) {
 				 Pid++;}
 				 else free(pcb);
                   }
-			
-				 
+			 }else free(pcb);
 			 }
-             else
-                  free(pcb);
+             else{
+				 Z502_REG9++;
+				 free(pcb);}
                   break;
         default: printf("call_type %d cannot be recognized\n",call_type);
         break;
@@ -304,7 +333,7 @@ void    svc( SYSTEM_CALL_DATA *SystemCallData ) {
 
     do_print--;
 }
-}                                               // End of svc
+                                          // End of svc
 
 
 
@@ -340,7 +369,7 @@ void    osInit( int argc, char *argv[]  ) {
         Z502MakeContext( &next_context, (void *)sample_code, KERNEL_MODE );
         Z502SwitchContext( SWITCH_CONTEXT_KILL_MODE, &next_context );
     }                   /* This routine should never return!!           */
-     os_create_process("testbase", scontext, 1);
+     os_create_process("testbase", scontext, 10);
     /*  This should be done by a "os_make_process" routine, so that
         test0 runs on a process recognized by the operating system.    */
     //Z502MakeContext( &next_context, (void *)test1a, USER_MODE );
