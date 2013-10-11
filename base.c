@@ -41,7 +41,11 @@ extern long Z502_REG6;
 extern long Z502_REG7;
 extern long Z502_REG8;
 extern long Z502_REG9;
+#define READY 1
+#define TIMER 2
+#define CURRENT_RUNNING 3
 int         Pid = 0;
+int         NextInterruptTime=0;
 
 extern void          *TO_VECTOR [];
 
@@ -59,6 +63,7 @@ char                 *call_names[] = { "mem_read ", "mem_write",
         this routine in the OS.
 ************************************************************************/
 //define process;
+void os_out_ready(PCB *current);
 typedef struct PCB{
         char Processname[20];
         int status;
@@ -66,15 +71,21 @@ typedef struct PCB{
 		int pid;
         int reg1;
         int reg2;
+		int wakeuptime;
         void *context;
         struct PCB *next;
         }PCB;
-        
+
+typedef struct Queue{
+	   PCB *node;
+	   struct Queue *next;
+}Queue;       
+
  PCB *readyfront = NULL;
  PCB *readyrear = NULL;
  PCB *timerfront = NULL;
  PCB *timerrear = NULL;
-
+ PCB *Running;
  int checkPCBname(PCB *pcbc){
 	       int i = 1;
 	       PCB *head = readyfront;
@@ -93,7 +104,47 @@ typedef struct PCB{
 		          //free(head);
                   return(i);
 }
- 
+ void add_to_timerQ(){
+	os_out_ready(Running);
+	if(timerfront == NULL&&timerrear == NULL){
+		timerfront = Running;
+		timerrear = Running;
+		NextInterruptTime = Running->wakeuptime;
+	}
+	else 
+
+
+
+ }
+
+ void os_out_ready(PCB *current){
+	 PCB *head = readyfront;
+	 if(current == readyfront){
+		 if(current->next == NULL){
+			 readyfront = NULL;
+			 readyrear = NULL;
+		 }
+		 else{
+			 readyfront = current->next;
+			 current->next=NULL;
+		 }
+			 
+	 }
+	 else{
+		 if(current->next == NULL){
+			 while(head->next!=current)
+				 head=head->next;
+			 head->next=NULL;
+		 }
+		 else{
+			 while(head->next!=current)
+				 head=head->next;
+			 head->next=current->next;
+			 current->next = NULL;
+		 }
+	 }
+	
+ }
  void os_delete_process_ready(int process_id){
 	     int i = 0;
 	     PCB *head = readyfront;
@@ -122,7 +173,7 @@ typedef struct PCB{
 		 }
 		 else if(i=1&&head!= readyfront){
 			 if(head1->next == NULL){
-				 while(head1->next = head){
+				 while(head1->next != head){
 					 head1= head1->next;
 				 }
 				 readyrear = head1;
@@ -131,7 +182,7 @@ typedef struct PCB{
 				 Pid--;
 			 }
 			 else{
-			    while(head->next == head)
+			    while(head->next != head)
 					head1 = head1-> next;
 				head1->next=head->next;
 				free(head);
@@ -179,6 +230,11 @@ void    os_create_process( char* process_name, void* scontext, long Prio ) {
         pcb->Priority = Prio;
         pcb->context = scontext;
 		pcb->pid = Pid;
+		readyfront = pcb;
+		readyrear = pcb;
+		pcb->next=NULL;
+		pcb->status=CURRENT_RUNNING;
+		Running = pcb;
 		Pid++;
         Z502MakeContext( &next_context, pcb->context, USER_MODE );
         Z502SwitchContext( SWITCH_CONTEXT_KILL_MODE, &next_context );
@@ -189,6 +245,8 @@ void start_timer( int delaytime ){
         int                 Status;
         //MEM_READ( Z502TimerStatus, &Status);
         MEM_WRITE( Z502TimerStart, &Temp );
+		
+
         Z502Idle();
 }
 
@@ -259,6 +317,7 @@ void    svc( SYSTEM_CALL_DATA *SystemCallData ) {
     int                 Time;
     long                tmp;
 	long                tmpid;
+	void                *next_context;
     PCB *pcb = (PCB *)malloc(sizeof(PCB));
     
 
@@ -297,7 +356,7 @@ void    svc( SYSTEM_CALL_DATA *SystemCallData ) {
         case SYSNUM_CREATE_PROCESS:
              strcpy(pcb->Processname , (char *)SystemCallData->Argument[0]);
              pcb->Priority = (long)SystemCallData->Argument[2];
-             if(Pid < 9){
+             if(Pid < 20){
              if(pcb->Priority >0){
 		       if(readyfront == NULL&&readyrear == NULL){
                  readyfront = pcb;
@@ -307,6 +366,9 @@ void    svc( SYSTEM_CALL_DATA *SystemCallData ) {
 				 pcb->pid = Pid;
 				 pcb->next=NULL;
 				 *SystemCallData->Argument[3] = Pid;
+				 pcb->status=READY;
+				 pcb->context = (void *)SystemCallData->Argument[1];
+				Z502MakeContext( &next_context, pcb->context, USER_MODE );
 				 Pid++;
                  }
                else if(readyfront!=NULL&&readyrear!=NULL){
@@ -316,6 +378,10 @@ void    svc( SYSTEM_CALL_DATA *SystemCallData ) {
                   Z502_REG9 = ERR_SUCCESS;
 				  pcb->pid = Pid;
 				  pcb->next=NULL;
+				  pcb->status=READY;
+				  pcb->context = (void *)SystemCallData->Argument[1];
+				  Z502MakeContext( &next_context, pcb->context, USER_MODE );
+
 				 *SystemCallData->Argument[3] = Pid;
 				 readyrear = pcb;
 				 Pid++;}
@@ -349,6 +415,8 @@ void    osInit( int argc, char *argv[]  ) {
     INT32               i;
     void                *scontext = (void *)test1b;
     int                 Prio = 1; 
+
+
     /* Demonstrates how calling arguments are passed thru to here       */
 
     printf( "Program called with %d arguments:", argc );
