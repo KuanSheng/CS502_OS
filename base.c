@@ -46,7 +46,12 @@ extern long Z502_REG9;
 #define CURRENT_RUNNING 3
 int         Pid = 0;
 int         NextInterruptTime=0;
-
+int                 Time;
+int                 Temp;
+INT32 LockResult;
+#define                  DO_LOCK                     1
+#define                  DO_UNLOCK                   0
+#define                  SUSPEND_UNTIL_LOCKED        TRUE
 extern void          *TO_VECTOR [];
 
 char                 *call_names[] = { "mem_read ", "mem_write",
@@ -63,7 +68,6 @@ char                 *call_names[] = { "mem_read ", "mem_write",
         this routine in the OS.
 ************************************************************************/
 //define process;
-void os_out_ready(PCB *current);
 typedef struct PCB{
         char Processname[20];
         int status;
@@ -86,6 +90,9 @@ typedef struct Queue{
  PCB *timerfront = NULL;
  PCB *timerrear = NULL;
  PCB *Running;
+ PCB *NextRunning;
+ PCB *tempPCB;
+
  int checkPCBname(PCB *pcbc){
 	       int i = 1;
 	       PCB *head = readyfront;
@@ -104,18 +111,6 @@ typedef struct Queue{
 		          //free(head);
                   return(i);
 }
- void add_to_timerQ(){
-	os_out_ready(Running);
-	if(timerfront == NULL&&timerrear == NULL){
-		timerfront = Running;
-		timerrear = Running;
-		NextInterruptTime = Running->wakeuptime;
-	}
-	else 
-
-
-
- }
 
  void os_out_ready(PCB *current){
 	 PCB *head = readyfront;
@@ -143,8 +138,121 @@ typedef struct Queue{
 			 current->next = NULL;
 		 }
 	 }
+	 Running = current;
+	 NextRunning = readyfront;
+
+	 
+}
+
+ void add_to_timerQ(){
+	 PCB *head = timerfront;
+	 PCB *head1 = timerfront;
+	 
+	if(timerfront == NULL&&timerrear == NULL){
+		timerfront = Running;
+		timerrear = Running;
+		
+		NextInterruptTime = Running->wakeuptime;
+	}
+	else{
+		
+		if(Running->wakeuptime < NextInterruptTime){
+			Running->next = timerfront;
+		    timerfront = Running;
+			
+			NextInterruptTime = Running->wakeuptime;
+		}
+		else{
+			while(head->next!=NULL){
+				if(Running->wakeuptime < head->wakeuptime)
+					break;
+				head=head->next;
+			}
+			if(head->next!=NULL){
+				while(head1->next!=head)
+					head1=head1->next;
+				Running->next = head;
+				head1->next=Running;
+				
+				
+			}
+			else{
+				if(Running->wakeuptime < head->wakeuptime){
+					while(head1->next!=head)
+						head1=head1->next;
+				   Running->next = head;
+				   head1->next=Running;
+				   
+				}
+				else{
+					head->next = Running;
+					Running->next=NULL;
+					timerrear = Running;
+					
+				}
+			}
+		}
+
+	}
+
+	Running=NULL;
 	
  }
+
+ void return_readyQ(PCB *pcb){
+	 if(readyfront==NULL&&readyrear==NULL){
+		 readyfront = pcb;
+		 readyrear = pcb;
+		 //NextRunning = readyfront;
+		 pcb->wakeuptime = 0;
+	 }
+	 else{
+		 readyrear->next = pcb;
+	     readyrear=pcb;
+		 pcb->wakeuptime = 0;
+	 }
+ }
+ void out_of_timerQ( PCB *pcb ){
+	 int currenttime;
+	 PCB *head = timerfront;
+	 if(pcb!=timerfront){
+		 if(pcb->next == NULL){
+			while(head->next!=pcb)
+				head= head->next;
+			head->next=NULL;
+			pcb->next = NULL;
+			return_readyQ(pcb);
+		 }
+		 else{
+			 while(head->next!=pcb)
+				 head= head->next;
+			 head->next = pcb->next;
+			 pcb->next = NULL;
+			 return_readyQ(pcb);
+		 }
+	 }
+	 else{
+		 if(pcb->next == NULL){
+			 timerfront = NULL;
+			 timerrear = NULL;
+			 pcb->next = NULL;
+			 NextInterruptTime = 0;
+			 return_readyQ(pcb);
+		 }
+		 else{
+			 timerfront = pcb->next;
+			 NextInterruptTime = pcb->next->wakeuptime;
+			 pcb->next = NULL;
+			 return_readyQ(pcb);
+			 //MEM_READ(Z502ClockStatus, &currenttime);
+			 //if(currenttime > NextInterruptTime)
+				 //out_of_timerQ(pcb->next);
+
+		 }
+	 }
+ }
+ 
+
  void os_delete_process_ready(int process_id){
 	     int i = 0;
 	     PCB *head = readyfront;
@@ -201,7 +309,8 @@ typedef struct Queue{
 
 	 if(name == ""){
 		     Z502_REG9 = ERR_SUCCESS;
-			 return(0);
+			 i=Running->pid;
+			 return(i);
 	    }
 	 else while(head!=0){
 		 if(strcmp(head->Processname,name) == 0){
@@ -230,24 +339,48 @@ void    os_create_process( char* process_name, void* scontext, long Prio ) {
         pcb->Priority = Prio;
         pcb->context = scontext;
 		pcb->pid = Pid;
-		readyfront = pcb;
-		readyrear = pcb;
+		//readyfront = pcb;
+		//readyrear = pcb;
 		pcb->next=NULL;
 		pcb->status=CURRENT_RUNNING;
 		Running = pcb;
 		Pid++;
         Z502MakeContext( &next_context, pcb->context, USER_MODE );
-        Z502SwitchContext( SWITCH_CONTEXT_KILL_MODE, &next_context );
+        Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &next_context );
 }
+void dispatcher(){
+	while(readyfront==NULL&&readyrear==NULL)
+	{CALL(Z502Idle());}
+	
+		os_out_ready(readyfront);
 
+}
 void start_timer( int delaytime ){
-        int                 Temp = delaytime;
+        
         int                 Status;
+		Temp = delaytime;
         //MEM_READ( Z502TimerStatus, &Status);
-        MEM_WRITE( Z502TimerStart, &Temp );
+		//READ_MODIFY(MEMORY_INTERLOCK_BASE, DO_LOCK, SUSPEND_UNTIL_LOCKED,&LockResult);
+		if(Running == NULL){
+			dispatcher();
+			Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &(Running->context) );
+		}
 		
+		MEM_READ(Z502ClockStatus, &Time);
+		MEM_WRITE( Z502TimerStart, &Temp);
+        Running->wakeuptime = Time+Temp;
+		add_to_timerQ();
+	    dispatcher();
+		
+	   //READ_MODIFY(MEMORY_INTERLOCK_BASE, DO_UNLOCK, SUSPEND_UNTIL_LOCKED,&LockResult);
+	   if(Running != NULL){
+		   Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &(Running->context) );
+	   }
+	   else
+	   {CALL(Z502Idle());}
+		//Z502Idle();
 
-        Z502Idle();
+	 
 }
 
 void    interrupt_handler( void ) {
@@ -256,7 +389,8 @@ void    interrupt_handler( void ) {
     INT32              Index = 0;
     static BOOL        remove_this_in_your_code = TRUE;   /** TEMP **/
     static INT32       how_many_interrupt_entries = 0;    /** TEMP **/
-
+	int                current_time;
+	
     // Get cause of interrupt
     MEM_READ(Z502InterruptDevice, &device_id );
     // Set this device as target of our query
@@ -265,15 +399,15 @@ void    interrupt_handler( void ) {
     MEM_READ(Z502InterruptStatus, &status );
 
     /** REMOVE THE NEXT SIX LINES **/
-    how_many_interrupt_entries++;                         /** TEMP **/
-    if ( remove_this_in_your_code && ( how_many_interrupt_entries < 20 ) )
-        {
-        printf( "Interrupt_handler: Found device ID %d with status %d\n",
-                        device_id, status );
-    }
-
-    // Clear out this device - we're done with it
-    MEM_WRITE(Z502InterruptClear, &Index );
+	//tempPCB = timerfront;
+	while(timerfront!=NULL){
+	MEM_READ(Z502ClockStatus, &current_time);
+    if(current_time > NextInterruptTime)
+	{out_of_timerQ(timerfront);}
+	 else break;
+	}
+	
+	 //return_readyQ(tempPCB);
 }                                       /* End of interrupt_handler */
 /************************************************************************
     FAULT_HANDLER
@@ -342,8 +476,11 @@ void    svc( SYSTEM_CALL_DATA *SystemCallData ) {
 			  if(tmpid>=0){
 			  os_delete_process_ready(tmpid);
 			  Z502_REG9 = ERR_SUCCESS;}
-			  else 
-			  Z502Halt();
+			  else if(tmpid == -1)
+			  os_delete_process_ready(Running->pid);
+			
+			  else
+				    Z502Halt();
 			  break;
               //the execution of sleep();
         case SYSNUM_SLEEP:
@@ -367,8 +504,9 @@ void    svc( SYSTEM_CALL_DATA *SystemCallData ) {
 				 pcb->next=NULL;
 				 *SystemCallData->Argument[3] = Pid;
 				 pcb->status=READY;
-				 pcb->context = (void *)SystemCallData->Argument[1];
-				Z502MakeContext( &next_context, pcb->context, USER_MODE );
+				 //pcb->context = (void *)SystemCallData->Argument[1];
+				Z502MakeContext( &next_context, (void *)SystemCallData->Argument[1], USER_MODE );
+				pcb->context = next_context;
 				 Pid++;
                  }
                else if(readyfront!=NULL&&readyrear!=NULL){
@@ -379,8 +517,9 @@ void    svc( SYSTEM_CALL_DATA *SystemCallData ) {
 				  pcb->pid = Pid;
 				  pcb->next=NULL;
 				  pcb->status=READY;
-				  pcb->context = (void *)SystemCallData->Argument[1];
-				  Z502MakeContext( &next_context, pcb->context, USER_MODE );
+				  //pcb->context = (void *)SystemCallData->Argument[1];
+				  Z502MakeContext( &next_context, (void *)SystemCallData->Argument[1], USER_MODE );
+				  pcb->context = next_context;
 
 				 *SystemCallData->Argument[3] = Pid;
 				 readyrear = pcb;
@@ -413,7 +552,7 @@ void    svc( SYSTEM_CALL_DATA *SystemCallData ) {
 void    osInit( int argc, char *argv[]  ) {
     void                *next_context;
     INT32               i;
-    void                *scontext = (void *)test1b;
+    void                *scontext = (void *)test1c;
     int                 Prio = 1; 
 
 
