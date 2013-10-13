@@ -305,8 +305,10 @@ typedef struct Queue{
  }
  int os_get_process_id(char *name){
 	 int i = 0;
+	 int j = 0;
+	 int m = 0;
 	 PCB *head = readyfront;
-
+	 PCB *head1 = timerfront;
 	 if(name == ""){
 		     Z502_REG9 = ERR_SUCCESS;
 			 i=Running->pid;
@@ -326,8 +328,27 @@ typedef struct Queue{
 		 Z502_REG9 = ERR_SUCCESS;
 	 }
 	 else 
-		 printf("can not find the process\n");
-	   
+	 {printf("can not find the process");
+	 Z502_REG9++;}
+
+	/*while(j == 1 ){
+		 while(head!=0){
+		 if(strcmp(head->Processname,name) == 0){
+			 i = 1;
+			 break;
+		 }
+		 else 
+			 head = head->next;
+		  }
+
+	 if(i == 1){
+		 return( head->pid );
+		 Z502_REG9 = ERR_SUCCESS;
+	 }
+	 else 
+	 {m=1;}
+	 }
+	 if(m==1&&j==1){printf("can not find the process!");}*/
  }
 //create process;    
     
@@ -358,6 +379,7 @@ void dispatcher(){
 void start_timer( int delaytime ){
         
         int                 Status;
+		PCB                 *head;
 		Temp = delaytime;
         //MEM_READ( Z502TimerStatus, &Status);
 		//READ_MODIFY(MEMORY_INTERLOCK_BASE, DO_LOCK, SUSPEND_UNTIL_LOCKED,&LockResult);
@@ -371,7 +393,26 @@ void start_timer( int delaytime ){
         Running->wakeuptime = Time+Temp;
 		add_to_timerQ();
 	    dispatcher();
-		
+
+		printf("cunrrent running pid %d\n",Running->pid);
+
+		head = readyfront;
+		printf("readyqueue:");
+		while(head!=NULL){
+			
+			printf("%d\t",head->pid);
+			head=head->next;
+		}
+		printf("\n");
+		head = timerfront;
+		printf("timerqueue:");
+		while(head!=NULL){
+			
+			printf("%d\t",head->pid);
+			
+			head=head->next;
+		}
+		printf("\n");
 	   //READ_MODIFY(MEMORY_INTERLOCK_BASE, DO_UNLOCK, SUSPEND_UNTIL_LOCKED,&LockResult);
 	   if(Running != NULL){
 		   Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &(Running->context) );
@@ -452,6 +493,7 @@ void    svc( SYSTEM_CALL_DATA *SystemCallData ) {
     long                tmp;
 	long                tmpid;
 	void                *next_context;
+	PCB                 *head;
     PCB *pcb = (PCB *)malloc(sizeof(PCB));
     
 
@@ -477,8 +519,16 @@ void    svc( SYSTEM_CALL_DATA *SystemCallData ) {
 			  os_delete_process_ready(tmpid);
 			  Z502_REG9 = ERR_SUCCESS;}
 			  else if(tmpid == -1)
-			  os_delete_process_ready(Running->pid);
-			
+			    {   
+					head =Running;
+			    Running = NULL;
+				while(readyfront==NULL&&timerfront==NULL){
+					Z502Halt();
+				}
+				//free(head);
+			  dispatcher();
+			  Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &(Running->context) );
+			  }
 			  else
 				    Z502Halt();
 			  break;
@@ -552,8 +602,10 @@ void    svc( SYSTEM_CALL_DATA *SystemCallData ) {
 void    osInit( int argc, char *argv[]  ) {
     void                *next_context;
     INT32               i;
-    void                *scontext = (void *)test1c;
+    void                *scontext = (void *)test1a;
     int                 Prio = 1; 
+	PCB *pcb = (PCB *)malloc(sizeof(PCB));
+	char name[20] ="testbase";
 
 
     /* Demonstrates how calling arguments are passed thru to here       */
@@ -576,9 +628,21 @@ void    osInit( int argc, char *argv[]  ) {
         Z502MakeContext( &next_context, (void *)sample_code, KERNEL_MODE );
         Z502SwitchContext( SWITCH_CONTEXT_KILL_MODE, &next_context );
     }                   /* This routine should never return!!           */
-     os_create_process("testbase", scontext, 10);
+     //os_create_process("testbase", scontext, 10);
     /*  This should be done by a "os_make_process" routine, so that
         test0 runs on a process recognized by the operating system.    */
-    //Z502MakeContext( &next_context, (void *)test1a, USER_MODE );
-    //Z502SwitchContext( SWITCH_CONTEXT_KILL_MODE, &next_context );
+	 strcpy(pcb->Processname , name);
+        pcb->status = 0;
+        pcb->Priority = Prio;
+       
+		pcb->pid = Pid;
+		//readyfront = pcb;
+		//readyrear = pcb;
+		pcb->next=NULL;
+		//pcb->status=CURRENT_RUNNING;
+		Running = pcb;
+		Pid++;
+    Z502MakeContext( &next_context, (void *)test1c, USER_MODE );
+	pcb->context = next_context;
+    Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &next_context );
 }                                               // End of osInit
