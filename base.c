@@ -48,6 +48,7 @@ int         Pid = 0;
 int         NextInterruptTime=0;
 int                 Time;
 int                 Temp;
+int                 Toppriority;
 INT32 LockResult;
 #define                  DO_LOCK                     1
 #define                  DO_UNLOCK                   0
@@ -122,6 +123,7 @@ typedef struct Queue{
 		 else{
 			 readyfront = current->next;
 			 current->next=NULL;
+			 Toppriority = readyfront->Priority;
 		 }
 			 
 	 }
@@ -200,18 +202,52 @@ typedef struct Queue{
  }
 
  void return_readyQ(PCB *pcb){
+     PCB *head = readyfront;
+	 PCB *head1 = readyfront;
+
 	 if(readyfront==NULL&&readyrear==NULL){
 		 readyfront = pcb;
 		 readyrear = pcb;
-		 //NextRunning = readyfront;
+		 Toppriority = pcb->Priority;
 		 pcb->wakeuptime = 0;
+		 pcb->next=NULL;
 	 }
 	 else{
-		 readyrear->next = pcb;
-	     readyrear=pcb;
-		 pcb->wakeuptime = 0;
-	 }
+		 if(pcb->Priority <= Toppriority){
+			 pcb->next = readyfront;
+			 readyfront = pcb;
+			 Toppriority = pcb->Priority;
+		 }
+		 else{
+			 while(head->next!=NULL){
+				 if(pcb->Priority < head->Priority)
+				 {break;}
+				 head = head->next;}
+				 
+				 if(head->next!=NULL){
+					 while(head1->next!=head){
+					   head1=head1->next;
+					 }
+					head1->next=pcb;
+					pcb->next=head;
+				 }
+				 else{
+					 if(pcb->Priority < head->Priority ){
+						 while(head1->next!=head){
+							 head1=head1->next;
+						 }
+						 head1->next=pcb;
+						 pcb->next = head;
+					 }
+					 else{
+						 head->next=pcb;
+						 readyrear=pcb;
+					 }
+				 }
+			 }
+		 }
  }
+
  void out_of_timerQ( PCB *pcb ){
 	 int currenttime;
 	 PCB *head = timerfront;
@@ -400,7 +436,7 @@ void start_timer( int delaytime ){
 		printf("readyqueue:");
 		while(head!=NULL){
 			
-			printf("%d\t",head->pid);
+			printf("%d(%d)\t",head->pid,head->Priority);
 			head=head->next;
 		}
 		printf("\n");
@@ -408,7 +444,7 @@ void start_timer( int delaytime ){
 		printf("timerqueue:");
 		while(head!=NULL){
 			
-			printf("%d\t",head->pid);
+			printf("%d(%d)\t",head->pid,head->Priority);
 			
 			head=head->next;
 		}
@@ -494,6 +530,7 @@ void    svc( SYSTEM_CALL_DATA *SystemCallData ) {
 	long                tmpid;
 	void                *next_context;
 	PCB                 *head;
+	PCB                 *head1;
     PCB *pcb = (PCB *)malloc(sizeof(PCB));
     
 
@@ -543,6 +580,8 @@ void    svc( SYSTEM_CALL_DATA *SystemCallData ) {
         case SYSNUM_CREATE_PROCESS:
              strcpy(pcb->Processname , (char *)SystemCallData->Argument[0]);
              pcb->Priority = (long)SystemCallData->Argument[2];
+			 head = readyfront;
+			 head1 = readyfront;
              if(Pid < 20){
              if(pcb->Priority >0){
 		       if(readyfront == NULL&&readyrear == NULL){
@@ -552,28 +591,75 @@ void    svc( SYSTEM_CALL_DATA *SystemCallData ) {
                  Z502_REG9 = ERR_SUCCESS;
 				 pcb->pid = Pid;
 				 pcb->next=NULL;
+				 Toppriority = pcb->Priority;
 				 *SystemCallData->Argument[3] = Pid;
-				 pcb->status=READY;
 				 //pcb->context = (void *)SystemCallData->Argument[1];
 				Z502MakeContext( &next_context, (void *)SystemCallData->Argument[1], USER_MODE );
 				pcb->context = next_context;
 				 Pid++;
                  }
                else if(readyfront!=NULL&&readyrear!=NULL){
-				 if(checkPCBname(pcb) == 1){
-					  readyrear->next = pcb;
-                  //*SystemCallData->Argument[4] = ERR_SUCCESS;
-                  Z502_REG9 = ERR_SUCCESS;
-				  pcb->pid = Pid;
-				  pcb->next=NULL;
-				  pcb->status=READY;
-				  //pcb->context = (void *)SystemCallData->Argument[1];
-				  Z502MakeContext( &next_context, (void *)SystemCallData->Argument[1], USER_MODE );
-				  pcb->context = next_context;
 
-				 *SystemCallData->Argument[3] = Pid;
-				 readyrear = pcb;
-				 Pid++;}
+				 if(checkPCBname(pcb) == 1){
+
+				  if(pcb->Priority < Toppriority){
+                    Z502_REG9 = ERR_SUCCESS;
+				    pcb->next = readyfront;
+				    readyfront = pcb;
+				    pcb->pid = Pid;
+				    pcb->next=NULL;
+				    Z502MakeContext( &next_context, (void *)SystemCallData->Argument[1], USER_MODE );
+				    pcb->context = next_context;
+                    *SystemCallData->Argument[3] = Pid;
+			        Pid++;
+				  }
+				  else{
+					  while(head->next!=NULL){
+						  if(pcb->Priority < head->Priority)
+							  break;
+						  else
+						  head = head->next;}
+
+					  if(head->next!=NULL){
+						  while(head1->next!=head)
+						  {head1=head1->next;}
+						  Z502_REG9 = ERR_SUCCESS;
+						  head1->next = pcb;
+						  pcb->next=head;
+						  pcb->pid = Pid;
+						  Z502MakeContext( &next_context, (void *)SystemCallData->Argument[1], USER_MODE );
+				          pcb->context = next_context;
+                          *SystemCallData->Argument[3] = Pid;
+			              Pid++;
+					  }
+					  else{
+						  if(pcb->Priority < head->Priority){
+							  while(head1->next!=head)
+							  {head1=head1->next;}
+							  Z502_REG9 = ERR_SUCCESS;
+							  head1->next=pcb;
+							  pcb->next=head;
+							  pcb->pid = Pid;
+						      Z502MakeContext( &next_context, (void *)SystemCallData->Argument[1], USER_MODE );
+				              pcb->context = next_context;
+                              *SystemCallData->Argument[3] = Pid;
+			                  Pid++;
+						  }
+						  else{
+							  Z502_REG9 = ERR_SUCCESS;
+							  head->next = pcb;
+							  readyrear = pcb;
+							  pcb->next=NULL;
+							  pcb->pid = Pid;
+						      Z502MakeContext( &next_context, (void *)SystemCallData->Argument[1], USER_MODE );
+				              pcb->context = next_context;
+                              *SystemCallData->Argument[3] = Pid;
+			                  Pid++;
+						  }
+					  }
+					   
+				  }
+				 }
 				 else free(pcb);
                   }
 			 }else free(pcb);
@@ -603,7 +689,7 @@ void    osInit( int argc, char *argv[]  ) {
     void                *next_context;
     INT32               i;
     void                *scontext = (void *)test1a;
-    int                 Prio = 1; 
+    int                 Prio = 8; 
 	PCB *pcb = (PCB *)malloc(sizeof(PCB));
 	char name[20] ="testbase";
 
@@ -642,7 +728,7 @@ void    osInit( int argc, char *argv[]  ) {
 		//pcb->status=CURRENT_RUNNING;
 		Running = pcb;
 		Pid++;
-    Z502MakeContext( &next_context, (void *)test1c, USER_MODE );
+    Z502MakeContext( &next_context, (void *)test1d, USER_MODE );
 	pcb->context = next_context;
     Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &next_context );
 }                                               // End of osInit
