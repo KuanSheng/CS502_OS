@@ -91,6 +91,7 @@ typedef struct Queue{
  PCB *timerfront = NULL;
  PCB *timerrear = NULL;
  PCB *suspendfront;
+ PCB *suspendrear;
  PCB *Running;
  PCB *NextRunning;
  PCB *tempPCB;
@@ -288,9 +289,116 @@ typedef struct Queue{
 		 }
 	 }
  }
- 
+ void resume_process(PCB *pcb){
+	 int         i;
+	 PCB *head = suspendfront;
+	 if(pcb == suspendfront){
+		 suspendfront=NULL;
+		 suspendrear=NULL;
+		 pcb->next=NULL;
+	 }
+	 else{
+		 while(head->next!=pcb){
+			 head=head->next;
+		 }
+		 if(pcb->next==NULL){
+			 head->next=NULL;
+			}
+		 else{
+			 head->next=pcb->next;
+			 pcb->next=NULL;
+		 }
+	 }
+	  return_readyQ(pcb);	
+	  Z502_REG9=ERR_SUCCESS;
 
- void os_delete_process_ready(int process_id){
+ }
+ void suspend_process_ready(PCB *pcb){
+
+	 PCB *head = readyfront;
+	 if(pcb == readyfront){
+		 if(pcb->next == NULL){
+			 readyfront = NULL;
+			 readyrear = NULL;
+		 }
+		 else{
+			 readyfront = pcb->next;
+			 pcb->next=NULL;
+			 Toppriority = readyfront->Priority;
+		 }
+			 
+	 }
+	 else{
+		 if(pcb->next == NULL){
+			 while(head->next!=pcb)
+				 head=head->next;
+			 head->next=NULL;
+		 }
+		 else{
+			 while(head->next!=pcb)
+				 head=head->next;
+			 head->next=pcb->next;
+			 pcb->next = NULL;
+		 }
+	 }
+
+	 if(suspendfront==NULL&&suspendrear==NULL){
+		 suspendfront = pcb;
+		 suspendrear = pcb;
+		 pcb->next = NULL;
+	 }
+	 else{
+		 suspendrear->next = pcb;
+		 suspendrear = pcb;
+		 pcb->next = NULL;
+	 }
+	
+ }
+
+void suspend_process_timer( PCB *pcb )
+{
+	 PCB *head = timerfront;
+	 if(pcb!=timerfront){
+		 if(pcb->next == NULL){
+			while(head->next!=pcb)
+				head= head->next;
+			head->next=NULL;
+			pcb->next = NULL;
+		 }
+		 else{
+			 while(head->next!=pcb)
+				 head= head->next;
+			 head->next = pcb->next;
+			 pcb->next = NULL;
+		 }
+	 }
+	 else{
+		 if(pcb->next == NULL){
+			 timerfront = NULL;
+			 timerrear = NULL;
+			 pcb->next = NULL;
+			 NextInterruptTime = 0;
+		 }
+		 else{
+			 timerfront = pcb->next;
+			 NextInterruptTime = pcb->next->wakeuptime;
+			 pcb->next = NULL;
+		 }
+	 	 
+	 if(suspendfront==NULL&&suspendrear==NULL){
+		 suspendfront = pcb;
+		 suspendrear = pcb;
+		 pcb->next = NULL;
+	 }
+	 else{
+		 suspendrear->next = pcb;
+		 suspendrear = pcb;
+		 pcb->next = NULL;
+	 }
+}
+}
+
+void os_delete_process_ready(int process_id){
 	     int i = 0;
 	     PCB *head = readyfront;
 		 PCB *head1 = readyfront;
@@ -340,6 +448,10 @@ typedef struct Queue{
 
 		
  }
+
+ 
+		
+ 
  int os_get_process_id(char *name){
 	 int i = 0;
 	 int j = 0;
@@ -538,6 +650,8 @@ void    svc( SYSTEM_CALL_DATA *SystemCallData ) {
     static short        do_print = 10;
     short               i;
     int                 Time;
+	int                 ID;
+	int                 k=0,m=0,n=0;
     long                tmp;
 	long                tmpid;
 	void                *next_context;
@@ -679,7 +793,71 @@ void    svc( SYSTEM_CALL_DATA *SystemCallData ) {
              else{
 				 Z502_REG9++;
 				 free(pcb);}
-                  break;
+        break;
+
+		case SYSNUM_SUSPEND_PROCESS:
+			ID = (int)SystemCallData->Argument[0];
+			head = suspendfront;
+			while(head!=NULL){
+				if(head->pid == ID){
+					n = 1;
+					break;
+				}
+				else
+					head = head->next;
+			}
+
+			if(n!=1){
+			head = readyfront;
+			while(head!=NULL){
+				if(head->pid == ID){
+					Z502_REG9 = ERR_SUCCESS;
+					suspend_process_ready(head);
+					k = 1;
+					break;
+				}
+				else
+					head = head->next;
+           }
+
+			if(k == 0){
+				head = timerfront;
+				while(head!=NULL){
+					if(head->pid == ID){
+						Z502_REG9 = ERR_SUCCESS;
+						suspend_process_timer(head);
+					    m = 1;
+					    break;
+					}
+					else
+						head=head->next;
+				}
+				if(m == 0&&k == 0){
+					printf("illegal PID\n");
+				}
+			}
+		}
+			if(n == 1){
+				printf("can not suspend suspended process\n");
+			}
+		break;
+
+		case SYSNUM_RESUME_PROCESS:
+			ID = (int)SystemCallData->Argument[0];
+			head = suspendfront;
+			while(head!=NULL){
+				if(head->pid == ID){
+					k=1;
+					break;}
+				else 
+					head=head->next;
+			}
+			if(k==1)
+			resume_process(head);
+			else 
+			printf("error\n");
+		break;
+
         default: printf("call_type %d cannot be recognized\n",call_type);
         break;
         }
@@ -740,7 +918,7 @@ void    osInit( int argc, char *argv[]  ) {
 		//pcb->status=CURRENT_RUNNING;
 		Running = pcb;
 		Pid++;
-    Z502MakeContext( &next_context, (void *)test1c, USER_MODE );
+    Z502MakeContext( &next_context, (void *)test1f, USER_MODE );
 	pcb->context = next_context;
     Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &next_context );
 }                                               // End of osInit
