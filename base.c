@@ -90,6 +90,7 @@ typedef struct Queue{
  PCB *readyrear = NULL;
  PCB *timerfront = NULL;
  PCB *timerrear = NULL;
+ PCB *suspendfront;
  PCB *Running;
  PCB *NextRunning;
  PCB *tempPCB;
@@ -364,27 +365,31 @@ typedef struct Queue{
 		 Z502_REG9 = ERR_SUCCESS;
 	 }
 	 else 
-	 {printf("can not find the process");
-	 Z502_REG9++;}
+	 {//printf("can not find the process");
+	 //Z502_REG9++;
+		 j=1;
+	 }
 
-	/*while(j == 1 ){
-		 while(head!=0){
-		 if(strcmp(head->Processname,name) == 0){
-			 i = 1;
-			 break;
+	if(j == 1 ){
+	 while(head1!=0){
+	 if(strcmp(head1->Processname,name) == 0){
+		 i = 1;
+		 break;
 		 }
 		 else 
-			 head = head->next;
+		 head1 = head1->next;
 		  }
 
 	 if(i == 1){
-		 return( head->pid );
+		 return( head1->pid );
 		 Z502_REG9 = ERR_SUCCESS;
 	 }
 	 else 
 	 {m=1;}
 	 }
-	 if(m==1&&j==1){printf("can not find the process!");}*/
+
+	 if(m==1&&j==1){printf("can not find the process!");
+	 Z502_REG9++;}
  }
 //create process;    
     
@@ -467,6 +472,7 @@ void    interrupt_handler( void ) {
     static BOOL        remove_this_in_your_code = TRUE;   /** TEMP **/
     static INT32       how_many_interrupt_entries = 0;    /** TEMP **/
 	int                current_time;
+	int                newtime;
 	
     // Get cause of interrupt
     MEM_READ(Z502InterruptDevice, &device_id );
@@ -482,6 +488,12 @@ void    interrupt_handler( void ) {
     if(current_time > NextInterruptTime)
 	{out_of_timerQ(timerfront);}
 	 else break;
+	}
+
+	if(timerfront!=NULL){
+		MEM_READ(Z502ClockStatus, &current_time);
+		newtime = timerfront->wakeuptime - current_time;
+		MEM_WRITE( Z502TimerStart, &newtime);
 	}
 	
 	 //return_readyQ(tempPCB);
@@ -728,7 +740,7 @@ void    osInit( int argc, char *argv[]  ) {
 		//pcb->status=CURRENT_RUNNING;
 		Running = pcb;
 		Pid++;
-    Z502MakeContext( &next_context, (void *)test1d, USER_MODE );
+    Z502MakeContext( &next_context, (void *)test1c, USER_MODE );
 	pcb->context = next_context;
     Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &next_context );
 }                                               // End of osInit
