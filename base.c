@@ -49,7 +49,7 @@ int         NextInterruptTime=0;
 int                 Time;
 int                 Temp;
 int                 Toppriority;
-int                 maxbuffer;
+int                 maxbuffer = 0;
 int                 actual_length;
 int                 msgnum;
 INT32 LockResult;
@@ -104,7 +104,7 @@ typedef struct message{
  PCB *tempPCB;
  message *msgfront;
  message *msgrear;
- message* checkmsg[8];
+ message* checkmsg[10];
 
  int checkPCBname(PCB *pcbc){
 	       int i = 1;
@@ -561,6 +561,26 @@ void send_message(int sid,int tid,int len,char* msgbuff){
 	else{
 		msgrear->next = msg;
 		msgrear = msg;
+		msg->next=NULL;
+	}
+
+}
+void send_message_to_all(int sid,int len,char* msgbuff){
+	message *msg=(message *)malloc(sizeof(message));
+	msg->source_pid = sid;
+	msg->target_pid = 99;
+	msg->msg_length = len;
+	strcpy(msg->msg_buffer,msgbuff);
+	
+	if(msgfront == NULL&&msgrear == NULL){
+		msgfront = msg;
+		msgrear = msg;
+		msg->next = NULL;
+	}
+	else{
+		msgrear->next = msg;
+		msgrear = msg;
+		msg->next = NULL;
 	}
 
 }
@@ -590,14 +610,14 @@ void msg_out_queue(message *msg){
 		}
 	}
 }
-void receive_message(){
+void receive_message_fromall(){
 	int flag = 0;
 	int i = 0;
 	
 	message *head = msgfront;
 
 	while(head!=NULL){
-		if(head->target_pid == Running->pid){
+		if(head->target_pid == Running->pid||head->target_pid == 99){
 			
 	        checkmsg[i] = head;
 			i++;
@@ -614,6 +634,25 @@ void receive_message(){
 	//}
 
 } 		
+void receive_message_fromone(int id){
+	int flag = 0;
+	int i = 0;
+	
+	message *head = msgfront;
+
+	while(head!=NULL){
+		if(head->target_pid == Running->pid||head->target_pid == Running->pid == 99){
+			if(head->source_pid = id){
+	        checkmsg[i] = head;
+			i++;
+			//msg_out_queue(head);
+			flag = 1;
+			}
+		}
+			head = head->next;
+	}
+	msgnum = i;
+}
  
  int os_get_process_id(char *name){
 	 int i = 0;
@@ -1072,8 +1111,13 @@ void    svc( SYSTEM_CALL_DATA *SystemCallData ) {
 			if(tid < 100){
 				if(mlen < 100)
 				{
-					send_message(sid,tid,mlen,tmpmsg);
-					maxbuffer++;
+					if(tid>0)
+					{send_message(sid,tid,mlen,tmpmsg);
+					maxbuffer++;}
+					else if(tid == -1){
+						send_message_to_all(sid,mlen,tmpmsg);
+						maxbuffer++;
+					}
 				}
 				else{
 					printf("illegal length!\n");
@@ -1092,19 +1136,38 @@ void    svc( SYSTEM_CALL_DATA *SystemCallData ) {
 
 			if(sid < 100){
 				if(mlen < 100){
-					receive_message();
+					if(sid == -1){
+					receive_message_fromall();
 					for(i=0;i<msgnum;i++){
 					actual_length = strlen(checkmsg[i]->msg_buffer);
 					if(mlen >actual_length){
 						msg_out_queue(checkmsg[i]);
 						*SystemCallData->Argument[3] = actual_length;
 						*SystemCallData->Argument[4] = checkmsg[i]->source_pid;
+						SystemCallData->Argument[1] = checkmsg[i]->msg_buffer;
 						Z502_REG9 = ERR_SUCCESS;
 					}
 					else{
 						printf("small buffer!\n");
 					}
+				}
+			}
+					else{
+					receive_message_fromone(sid);
+					for(i=0;i<msgnum;i++){
+					actual_length = strlen(checkmsg[i]->msg_buffer);
+					if(mlen >actual_length){
+						msg_out_queue(checkmsg[i]);
+						*SystemCallData->Argument[3] = actual_length;
+						*SystemCallData->Argument[4] = checkmsg[i]->source_pid;
+						SystemCallData->Argument[1] = checkmsg[i]->msg_buffer;
+						Z502_REG9 = ERR_SUCCESS;
 					}
+					else{
+						printf("small buffer!\n");
+					}
+				}
+					} 
 				}
 				else
 					printf("illegal length!\n");
