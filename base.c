@@ -49,6 +49,9 @@ int         NextInterruptTime=0;
 int                 Time;
 int                 Temp;
 int                 Toppriority;
+int                 maxbuffer;
+int                 actual_length;
+int                 msgnum;
 INT32 LockResult;
 #define                  DO_LOCK                     1
 #define                  DO_UNLOCK                   0
@@ -81,10 +84,14 @@ typedef struct PCB{
         struct PCB *next;
         }PCB;
 
-typedef struct Queue{
-	   PCB *node;
-	   struct Queue *next;
-}Queue;       
+typedef struct message{
+	   long    target_pid;
+	   long    source_pid;
+	   long    msg_length;
+	   char  msg_buffer[30];
+	   struct message *next;
+	   
+}message; 
 
  PCB *readyfront = NULL;
  PCB *readyrear = NULL;
@@ -95,6 +102,9 @@ typedef struct Queue{
  PCB *Running;
  PCB *NextRunning;
  PCB *tempPCB;
+ message *msgfront;
+ message *msgrear;
+ message* checkmsg[8];
 
  int checkPCBname(PCB *pcbc){
 	       int i = 1;
@@ -536,9 +546,74 @@ void os_delete_process_ready(int process_id){
 
 		
  }
+void send_message(int sid,int tid,int len,char* msgbuff){
+	message *msg=(message *)malloc(sizeof(message));
+	msg->source_pid = sid;
+	msg->target_pid = tid;
+	msg->msg_length = len;
+	strcpy(msg->msg_buffer,msgbuff);
+	
+	if(msgfront == NULL&&msgrear == NULL){
+		msgfront = msg;
+		msgrear = msg;
+		msg->next = NULL;
+	}
+	else{
+		msgrear->next = msg;
+		msgrear = msg;
+	}
 
- 
-		
+}
+void msg_out_queue(message *msg){
+	message *head = msgfront;
+
+	if(msg == msgfront){
+		if(msg->next == NULL){
+			msgfront = NULL;
+			msgrear = NULL;
+		}
+		else{
+			msgfront = msg->next;
+			msg->next = NULL;
+		}
+	}
+	else{
+		while(head->next == msg){
+			head = head->next;
+		}
+		if(msg->next!=NULL){
+			head->next = msg->next;
+			msg->next = NULL;
+		}
+		else{
+			head->next = NULL;
+		}
+	}
+}
+void receive_message(){
+	int flag = 0;
+	int i = 0;
+	
+	message *head = msgfront;
+
+	while(head!=NULL){
+		if(head->target_pid == Running->pid){
+			
+	        checkmsg[i] = head;
+			i++;
+			//msg_out_queue(head);
+			flag = 1;
+
+		}
+			head = head->next;
+	}
+	msgnum = i;
+	//if(flag == 1){
+	//checkmsg = head;
+	//	//Z502_REG9 = ERR_SUCCESS;
+	//}
+
+} 		
  
  int os_get_process_id(char *name){
 	 int i = 0;
@@ -741,9 +816,12 @@ void    svc( SYSTEM_CALL_DATA *SystemCallData ) {
 	int                 ID;
 	int                 k=0,m=0,n=0;
 	int                 PR;
+	int                 sid,tid,mlen;
+	int                 actual_length;
     long                tmp;
 	long                tmpid;
 	void                *next_context;
+	char                *tmpmsg;
 	PCB                 *head;
 	PCB                 *head1;
     PCB *pcb = (PCB *)malloc(sizeof(PCB));
@@ -948,27 +1026,32 @@ void    svc( SYSTEM_CALL_DATA *SystemCallData ) {
 		break;
 		case SYSNUM_CHANGE_PRIORITY:
 			ID = (int)SystemCallData->Argument[0];
-			PR = (int)SystemCallData->Argument[0];
+			PR = (int)SystemCallData->Argument[1];
+			if(ID == -1){
+				Running->Priority = PR;
+				Z502_REG9 = ERR_SUCCESS;
+			}
+			else{
 			if(PR < 100){
 			if(checkReady(ID) == 1){
 				head = readyfront;
 				while(head->pid != ID)
 					head=head->next;
-				change_priority_ready(head,ID);
+				change_priority_ready(head,PR);
 				Z502_REG9 = ERR_SUCCESS;
 			}
 			else if(checkTimer(ID) == 1){
 				head = timerfront;
 				while(head->pid != ID)
 					head=head->next;
-				change_priority_timer(head,ID);
+				change_priority_timer(head,PR);
 				Z502_REG9 = ERR_SUCCESS;
 			}
 			else if(checkSuspend(ID) == 1){
 				head = suspendfront;
 				while(head->pid != ID)
 					head = head->next;
-				change_priority_suspend(head,ID);
+				change_priority_suspend(head,PR);
 				Z502_REG9 = ERR_SUCCESS;
 			}
 			else{
@@ -978,7 +1061,56 @@ void    svc( SYSTEM_CALL_DATA *SystemCallData ) {
 			else{
 				printf("illegal Priority");
 			}
+			}
+		break;
+		case SYSNUM_SEND_MESSAGE:
+			sid = Running->pid;
+			tid = (int)SystemCallData->Argument[0];
+			tmpmsg =(char *)SystemCallData->Argument[1];
+			mlen = (int)SystemCallData->Argument[2];
+			if(maxbuffer < 8){
+			if(tid < 100){
+				if(mlen < 100)
+				{
+					send_message(sid,tid,mlen,tmpmsg);
+					maxbuffer++;
+				}
+				else{
+					printf("illegal length!\n");
+				}
+			} else
+				printf("illegal id!\n");
+			}
+			else 
+			{printf("no space!\n");
+			Z502_REG9++;
+			}
+		break;
+		case  SYSNUM_RECEIVE_MESSAGE:
+			sid = (int)SystemCallData->Argument[0];
+			mlen = (int)SystemCallData->Argument[2];
 
+			if(sid < 100){
+				if(mlen < 100){
+					receive_message();
+					for(i=0;i<msgnum;i++){
+					actual_length = strlen(checkmsg[i]->msg_buffer);
+					if(mlen >actual_length){
+						msg_out_queue(checkmsg[i]);
+						*SystemCallData->Argument[3] = actual_length;
+						*SystemCallData->Argument[4] = checkmsg[i]->source_pid;
+						Z502_REG9 = ERR_SUCCESS;
+					}
+					else{
+						printf("small buffer!\n");
+					}
+					}
+				}
+				else
+					printf("illegal length!\n");
+			}
+			else
+				printf("illegal id!\n");
 		break;
         default: printf("call_type %d cannot be recognized\n",call_type);
         break;
@@ -1040,7 +1172,7 @@ void    osInit( int argc, char *argv[]  ) {
 		//pcb->status=CURRENT_RUNNING;
 		Running = pcb;
 		Pid++;
-    Z502MakeContext( &next_context, (void *)test1h, USER_MODE );
+    Z502MakeContext( &next_context, (void *)test1j, USER_MODE );
 	pcb->context = next_context;
     Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &next_context );
 }                                               // End of osInit
