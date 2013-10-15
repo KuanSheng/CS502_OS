@@ -114,6 +114,50 @@ typedef struct Queue{
 		          //free(head);
                   return(i);
 }
+int checkReady(int id){
+	 int flag = 0;
+	 PCB *head = readyfront;
+	 while(head!=NULL){
+		 if(head->pid == id){
+			 flag = 1;
+			 return(flag);
+		 }
+		 else
+			 head =head->next;
+	 }
+
+	 return(flag);
+ }
+int checkTimer(int id){
+	 int flag = 0;
+	 PCB *head = timerfront;
+	 while(head!=NULL){
+		 if(head->pid == id){
+			 flag = 1;
+			 return(flag);
+		 }
+		 else
+			 head =head->next;
+	 }
+
+	 return(flag);
+ }
+
+int checkSuspend(int id){
+	int flag = 0;
+	 PCB *head = suspendfront;
+	 while(head!=NULL){
+		 if(head->pid == id){
+			 flag = 1;
+			 return(flag);
+		 }
+		 else
+			 head =head->next;
+	 }
+
+	 return(flag);
+
+ }
 
  void os_out_ready(PCB *current){
 	 PCB *head = readyfront;
@@ -288,6 +332,50 @@ typedef struct Queue{
 
 		 }
 	 }
+ }
+ void change_priority_ready(PCB *pcb,int new_priority){
+	 PCB *head = readyfront;
+	 PCB *head1 = readyfront;
+
+	 if(pcb == readyfront){
+		 if(pcb->next == NULL){
+			 readyfront = NULL;
+			 readyrear = NULL;
+		 }
+		 else{
+			 readyfront = pcb->next;
+			 pcb->next=NULL;
+			 Toppriority = readyfront->Priority;
+		 }
+			 
+	 }
+	 else{
+		 if(pcb->next == NULL){
+			 while(head->next!=pcb)
+				 head=head->next;
+			 head->next=NULL;
+		 }
+		 else{
+			 while(head->next!=pcb)
+				 head=head->next;
+			 head->next=pcb->next;
+			 pcb->next = NULL;
+		 }
+	 }
+
+	  pcb->Priority = new_priority;
+	  head = readyfront;
+
+	  return_readyQ(pcb);
+ }
+ void change_priority_timer(PCB *pcb,int new_priority){
+	 pcb->Priority = new_priority;
+ }
+ void change_priority_running(int new_priority){
+	 Running->Priority = new_priority;
+ }
+ void change_priority_suspend(PCB *pcb,int new_priority){
+	 pcb->Priority = new_priority;
  }
  void resume_process(PCB *pcb){
 	 int         i;
@@ -652,6 +740,7 @@ void    svc( SYSTEM_CALL_DATA *SystemCallData ) {
     int                 Time;
 	int                 ID;
 	int                 k=0,m=0,n=0;
+	int                 PR;
     long                tmp;
 	long                tmpid;
 	void                *next_context;
@@ -857,7 +946,40 @@ void    svc( SYSTEM_CALL_DATA *SystemCallData ) {
 			else 
 			printf("error\n");
 		break;
+		case SYSNUM_CHANGE_PRIORITY:
+			ID = (int)SystemCallData->Argument[0];
+			PR = (int)SystemCallData->Argument[0];
+			if(PR < 100){
+			if(checkReady(ID) == 1){
+				head = readyfront;
+				while(head->pid != ID)
+					head=head->next;
+				change_priority_ready(head,ID);
+				Z502_REG9 = ERR_SUCCESS;
+			}
+			else if(checkTimer(ID) == 1){
+				head = timerfront;
+				while(head->pid != ID)
+					head=head->next;
+				change_priority_timer(head,ID);
+				Z502_REG9 = ERR_SUCCESS;
+			}
+			else if(checkSuspend(ID) == 1){
+				head = suspendfront;
+				while(head->pid != ID)
+					head = head->next;
+				change_priority_suspend(head,ID);
+				Z502_REG9 = ERR_SUCCESS;
+			}
+			else{
+				printf("ID ERROR!\n");
+			}
+			}
+			else{
+				printf("illegal Priority");
+			}
 
+		break;
         default: printf("call_type %d cannot be recognized\n",call_type);
         break;
         }
@@ -918,7 +1040,7 @@ void    osInit( int argc, char *argv[]  ) {
 		//pcb->status=CURRENT_RUNNING;
 		Running = pcb;
 		Pid++;
-    Z502MakeContext( &next_context, (void *)test1f, USER_MODE );
+    Z502MakeContext( &next_context, (void *)test1h, USER_MODE );
 	pcb->context = next_context;
     Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &next_context );
 }                                               // End of osInit
