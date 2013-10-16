@@ -104,7 +104,7 @@ typedef struct message{
  PCB *tempPCB;
  message *msgfront;
  message *msgrear;
- message* checkmsg[10];
+ message *checkmsg;
 
  int checkPCBname(PCB *pcbc){
 	       int i = 1;
@@ -619,19 +619,18 @@ void receive_message_fromall(){
 	while(head!=NULL){
 		if(head->target_pid == Running->pid||head->target_pid == 99){
 			
-	        checkmsg[i] = head;
-			i++;
-			//msg_out_queue(head);
-			flag = 1;
+	        {flag =1;
+			break;}
 
 		}
-			head = head->next;
+			else head = head->next;
 	}
-	msgnum = i;
-	//if(flag == 1){
-	//checkmsg = head;
+	
+	if(flag == 1){
+	checkmsg = head;
+	msgnum++;
 	//	//Z502_REG9 = ERR_SUCCESS;
-	//}
+	}
 
 } 		
 void receive_message_fromone(int id){
@@ -643,15 +642,22 @@ void receive_message_fromone(int id){
 	while(head!=NULL){
 		if(head->target_pid == Running->pid||head->target_pid == Running->pid == 99){
 			if(head->source_pid = id){
-	        checkmsg[i] = head;
-			i++;
+	       
+			
 			//msg_out_queue(head);
 			flag = 1;
+			break;
 			}
 		}
-			head = head->next;
+			else head = head->next;
 	}
-	msgnum = i;
+
+	if(flag == 1){
+	checkmsg = head;
+	msgnum++;
+	//	//Z502_REG9 = ERR_SUCCESS;
+	}
+	
 }
  
  int os_get_process_id(char *name){
@@ -724,6 +730,9 @@ void    os_create_process( char* process_name, void* scontext, long Prio ) {
         Z502MakeContext( &next_context, pcb->context, USER_MODE );
         Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &next_context );
 }
+void set_printer(){
+
+}
 void dispatcher(){
 	while(readyfront==NULL&&readyrear==NULL)
 	{CALL(Z502Idle());}
@@ -748,8 +757,9 @@ void start_timer( int delaytime ){
         Running->wakeuptime = Time+Temp;
 		add_to_timerQ();
 	    dispatcher();
-
+		printf("\n");
 		printf("cunrrent running pid %d\n",Running->pid);
+		printf("\n");
 
 		head = readyfront;
 		printf("readyqueue:");
@@ -759,6 +769,7 @@ void start_timer( int delaytime ){
 			head=head->next;
 		}
 		printf("\n");
+		printf("\n");
 		head = timerfront;
 		printf("timerqueue:");
 		while(head!=NULL){
@@ -767,6 +778,16 @@ void start_timer( int delaytime ){
 			
 			head=head->next;
 		}
+		printf("\n");
+		printf("\n");
+		head=suspendfront;
+		printf("suspendqueue:");
+			while(head!=NULL){
+				printf("%d(%d)\t",head->pid,head->Priority);
+				head=head->next;
+
+			}
+		printf("\n");
 		printf("\n");
 	   //READ_MODIFY(MEMORY_INTERLOCK_BASE, DO_UNLOCK, SUSPEND_UNTIL_LOCKED,&LockResult);
 	   if(Running != NULL){
@@ -832,6 +853,9 @@ void    fault_handler( void )
 
     printf( "Fault_handler: Found vector type %d with value %d\n",
                         device_id, status );
+	if(device_id==4&&status==0){
+		Z502Halt();
+	}
     // Clear out this device - we're done with it
     MEM_WRITE(Z502InterruptClear, &Index );
 }                                       /* End of fault_handler */
@@ -1137,36 +1161,37 @@ void    svc( SYSTEM_CALL_DATA *SystemCallData ) {
 			if(sid < 100){
 				if(mlen < 100){
 					if(sid == -1){
+
 					receive_message_fromall();
-					for(i=0;i<msgnum;i++){
-					actual_length = strlen(checkmsg[i]->msg_buffer);
+					if(msgnum>0){
+					actual_length = strlen(checkmsg->msg_buffer);
 					if(mlen >actual_length){
-						msg_out_queue(checkmsg[i]);
+						msg_out_queue(checkmsg);
 						*SystemCallData->Argument[3] = actual_length;
-						*SystemCallData->Argument[4] = checkmsg[i]->source_pid;
-						SystemCallData->Argument[1] = checkmsg[i]->msg_buffer;
+						*SystemCallData->Argument[4] = checkmsg->source_pid;
+						strcpy((char *)SystemCallData->Argument[1] ,checkmsg->msg_buffer);
 						Z502_REG9 = ERR_SUCCESS;
 					}
 					else{
 						printf("small buffer!\n");
 					}
-				}
+					}
 			}
 					else{
 					receive_message_fromone(sid);
-					for(i=0;i<msgnum;i++){
-					actual_length = strlen(checkmsg[i]->msg_buffer);
+					if(msgnum>0){
+					actual_length = strlen(checkmsg->msg_buffer);
 					if(mlen >actual_length){
-						msg_out_queue(checkmsg[i]);
+						msg_out_queue(checkmsg);
 						*SystemCallData->Argument[3] = actual_length;
-						*SystemCallData->Argument[4] = checkmsg[i]->source_pid;
-						SystemCallData->Argument[1] = checkmsg[i]->msg_buffer;
+						*SystemCallData->Argument[4] = checkmsg->source_pid;
+						strcpy((char *)SystemCallData->Argument[1], checkmsg->msg_buffer);
 						Z502_REG9 = ERR_SUCCESS;
 					}
 					else{
 						printf("small buffer!\n");
 					}
-				}
+					}
 					} 
 				}
 				else
@@ -1199,7 +1224,7 @@ void    osInit( int argc, char *argv[]  ) {
     int                 Prio = 8; 
 	PCB *pcb = (PCB *)malloc(sizeof(PCB));
 	char name[20] ="testbase";
-
+	char test[20];
 
     /* Demonstrates how calling arguments are passed thru to here       */
 
@@ -1235,7 +1260,43 @@ void    osInit( int argc, char *argv[]  ) {
 		//pcb->status=CURRENT_RUNNING;
 		Running = pcb;
 		Pid++;
-    Z502MakeContext( &next_context, (void *)test1j, USER_MODE );
+
+		printf("please input the test you want to enter:\n");
+		scanf("%s",&test);
+		if(strcmp(test,"test1a")==0){
+			Z502MakeContext( &next_context, (void *)test1a, USER_MODE );
+		}
+		else if(strcmp(test,"test1b")==0){
+			Z502MakeContext( &next_context, (void *)test1b, USER_MODE );
+		}
+		else if(strcmp(test,"test1c")==0){
+			Z502MakeContext( &next_context, (void *)test1c, USER_MODE );
+		}
+		else if(strcmp(test,"test1d")==0){
+			Z502MakeContext( &next_context, (void *)test1d, USER_MODE );
+		}
+		else if(strcmp(test,"test1e")==0){
+			Z502MakeContext( &next_context, (void *)test1e, USER_MODE );
+		}
+		else if(strcmp(test,"test1f")==0){
+			Z502MakeContext( &next_context, (void *)test1f, USER_MODE );
+		}
+		else if(strcmp(test,"test1g")==0){
+			Z502MakeContext( &next_context, (void *)test1g, USER_MODE );
+		}
+		else if(strcmp(test,"test1h")==0){
+			Z502MakeContext( &next_context, (void *)test1h, USER_MODE );
+		}
+		else if(strcmp(test,"test1i")==0){
+			Z502MakeContext( &next_context, (void *)test1i, USER_MODE );
+		}
+		else if(strcmp(test,"test1j")==0){
+			Z502MakeContext( &next_context, (void *)test1j, USER_MODE );
+		}
+		else if(strcmp(test,"test1k")==0){
+			Z502MakeContext( &next_context, (void *)test1k, USER_MODE );
+		}
+    //Z502MakeContext( &next_context, (void *)test1e, USER_MODE );
 	pcb->context = next_context;
     Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &next_context );
 }                                               // End of osInit
