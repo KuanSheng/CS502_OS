@@ -92,19 +92,31 @@ typedef struct message{
 	   struct message *next;
 	   
 }message; 
+typedef struct Frame{
+	  UINT16 pagenumber;
+	  UINT16 framenumber;
+	  UINT16 pid;
+	  UINT16 framestatus;//free or not free;
+	  struct Frame *next;
+}Frame;
 
  PCB *readyfront = NULL;
  PCB *readyrear = NULL;
  PCB *timerfront = NULL;
  PCB *timerrear = NULL;
+ PCB *diskfront = NULL;
+ PCB *diskrear = NULL;
  PCB *suspendfront;
  PCB *suspendrear;
  PCB *Running;
  PCB *NextRunning;
  PCB *tempPCB;
+
  message *msgfront;
  message *msgrear;
  message *checkmsg;
+ Frame *framefront;
+ Frame *framerear;
 
  int checkPCBname(PCB *pcbc){
 	       int i = 1;
@@ -799,7 +811,19 @@ void start_timer( int delaytime ){
 
 	 
 }
+Frame* get_free_frame(){
+	Frame *head = framefront;
 
+	while(head != NULL){
+		if(head->framestatus == 0)
+			return head;
+
+		else 
+			head = head->next;
+	}
+
+	return NULL;
+}
 void    interrupt_handler( void ) {
     INT32              device_id;
     INT32              status;
@@ -843,6 +867,7 @@ void    fault_handler( void )
     INT32       device_id;
     INT32       status;
     INT32       Index = 0;
+	Frame       *f;
 
     // Get cause of interrupt
     MEM_READ(Z502InterruptDevice, &device_id );
@@ -853,6 +878,25 @@ void    fault_handler( void )
 
     printf( "Fault_handler: Found vector type %d with value %d\n",
                         device_id, status );
+	if(status>=1024){
+		printf("page overflow!\n");
+		Z502Halt();
+	}
+	if(Z502_PAGE_TBL_ADDR == NULL){
+	Z502_PAGE_TBL_LENGTH = 1024;
+	Z502_PAGE_TBL_ADDR = (UINT16 *) calloc(sizeof(UINT16),
+		Z502_PAGE_TBL_LENGTH);}
+	//here we initialize the page table
+	f = get_free_frame();
+	if(f != NULL){
+		f->pid = Running->pid;
+		f->pagenumber = status;
+		f->framenumber = 1;
+		Z502_PAGE_TBL_ADDR[f->pagenumber] = (UINT16)f->framenumber | 0x8000;
+		
+	}
+
+
 	if(device_id==4&&status==0){
 		Z502Halt();
 	}
@@ -882,6 +926,7 @@ void    svc( SYSTEM_CALL_DATA *SystemCallData ) {
 	int                 sid,tid,mlen;
 	int                 actual_length;
     long                tmp;
+	INT32               diskstatus;
 	long                tmpid;
 	void                *next_context;
 	char                *tmpmsg;
@@ -1200,6 +1245,50 @@ void    svc( SYSTEM_CALL_DATA *SystemCallData ) {
 			else
 				printf("illegal id!\n");
 		break;
+		case  SYSNUM_DISK_READ:
+			MEM_WRITE(Z502DiskSetID, &SystemCallData->Argument[0]);
+                        MEM_READ(Z502DiskStatus, &diskstatus);
+                        if (diskstatus == DEVICE_FREE)        // Disk hasn't been used - should be free
+                                printf("Got expected result for Disk Status\n");
+                        else
+                                printf("Got erroneous result for Disk Status - Device not free.\n");
+                        MEM_WRITE(Z502DiskSetSector, &SystemCallData->Argument[1]);
+                        MEM_WRITE(Z502DiskSetBuffer, (INT32*)SystemCallData->Argument[2]);
+                        diskstatus = 0;                        // Specify a read
+                        MEM_WRITE(Z502DiskSetAction, &diskstatus);
+                        diskstatus = 0;                        // Must be set to 0
+                        MEM_WRITE(Z502DiskStart, &diskstatus);
+                        MEM_WRITE(Z502DiskSetID, &SystemCallData->Argument[0]);
+                        MEM_READ(Z502DiskStatus, &diskstatus);
+                        while (diskstatus != DEVICE_FREE) 
+                        {
+                                Z502Idle();
+                                MEM_READ(Z502DiskStatus, &diskstatus);
+                        }
+                        break;
+		break;
+		case SYSNUM_DISK_WRITE:
+		/* Do the hardware call to put data on disk */
+	     MEM_WRITE(Z502DiskSetID, &SystemCallData->Argument[0]);
+	     MEM_READ(Z502DiskStatus, &diskstatus);
+	     if (diskstatus == DEVICE_FREE)        // Disk hasn't been used - should be free
+		   printf("Got expected result for Disk Status\n");
+	     else
+		   printf("Got erroneous result for Disk Status - Device not free.\n");
+	     MEM_WRITE(Z502DiskSetSector, &SystemCallData->Argument[1]);
+	     MEM_WRITE(Z502DiskSetBuffer, (INT32 * )SystemCallData->Argument[2]);
+	      diskstatus = 1;                        // Specify a write
+	     MEM_WRITE(Z502DiskSetAction, &diskstatus);
+	       diskstatus = 0;                        // Must be set to 0
+	     MEM_WRITE(Z502DiskStart, &diskstatus);
+	// Disk should now be started - let's see
+	     MEM_WRITE(Z502DiskSetID, &SystemCallData->Argument[0]);
+	     MEM_READ(Z502DiskStatus, &diskstatus);
+	     while (diskstatus != DEVICE_FREE) {
+		   Z502Idle();
+		   MEM_READ(Z502DiskStatus, &diskstatus);
+	     }
+		break;
         default: printf("call_type %d cannot be recognized\n",call_type);
         break;
         }
@@ -1222,9 +1311,30 @@ void    osInit( int argc, char *argv[]  ) {
     INT32               i;
     void                *scontext = (void *)test1a;
     int                 Prio = 8; 
+	int                 j,frameindex = 0;
 	PCB *pcb = (PCB *)malloc(sizeof(PCB));
 	char name[20] ="testbase";
 	char test[20];
+	Frame *frame;
+
+	/*let's just initialize all the frames here*/
+	for(j=0;j<64;j++){
+		frame = (Frame *)malloc(sizeof(Frame));
+		frame->framenumber = frameindex;
+		frame->framestatus = 0;
+		frame->next = NULL;
+
+		if(framefront == NULL){
+			framefront = frame;
+			framerear = frame;
+		}
+
+		else{
+			framerear->next = frame;
+			framerear = frame;
+		}
+		frameindex++;
+	}
 
     /* Demonstrates how calling arguments are passed thru to here       */
 
@@ -1296,6 +1406,16 @@ void    osInit( int argc, char *argv[]  ) {
 		else if(strcmp(test,"test1k")==0){
 			Z502MakeContext( &next_context, (void *)test1k, USER_MODE );
 		}
+		else if(strcmp(test,"test2a")==0){
+			Z502MakeContext( &next_context, (void *)test2a, USER_MODE );
+		}
+		else if(strcmp(test,"test2b")==0){
+			Z502MakeContext( &next_context, (void *)test2b, USER_MODE );
+		}
+		else if(strcmp(test,"test2c")==0){
+			Z502MakeContext( &next_context, (void *)test2c, USER_MODE );
+		}
+
     //Z502MakeContext( &next_context, (void *)test1e, USER_MODE );
 	pcb->context = next_context;
     Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &next_context );
