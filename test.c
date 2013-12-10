@@ -1395,6 +1395,7 @@ void test2c(void) {
 		if ((data_read->int_data[0] != data_written->int_data[0])
 				|| (data_read->int_data[1] != data_written->int_data[1])
 				|| (data_read->int_data[2] != data_written->int_data[2])
+
 				|| (data_read->int_data[3] != data_written->int_data[3])) {
 			printf("AN ERROR HAS OCCURRED.\n");
 		} else if (Z502_REG6 % DISPLAY_GRANULARITY2c == 0) {

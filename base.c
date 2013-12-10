@@ -80,6 +80,7 @@ typedef struct PCB{
         int reg1;
         int reg2;
 		int wakeuptime;
+		int disk_id;
         void *context;
         struct PCB *next;
         }PCB;
@@ -99,19 +100,26 @@ typedef struct Frame{
 	  UINT16 framestatus;//free or not free;
 	  struct Frame *next;
 }Frame;
-
+typedef struct Disk{
+	    int diskstatus;
+        long diskID; 
+        long sectorID;
+        PCB *PCB;
+        struct Disk *next;
+}Disk;
 //initialnize some queue here
  PCB *readyfront = NULL;
  PCB *readyrear = NULL;
  PCB *timerfront = NULL;
  PCB *timerrear = NULL;
- PCB *diskfront = NULL;
+ PCB *diskfront= NULL;
  PCB *diskrear = NULL;
  PCB *suspendfront;
  PCB *suspendrear;
  PCB *Running;
  PCB *NextRunning;
  PCB *tempPCB;
+
 
  message *msgfront;
  message *msgrear;
@@ -181,6 +189,77 @@ int checkSuspend(int id){
 	 return(flag);
 
  }
+void os_out_ready(PCB *current){
+	 PCB *head = readyfront;
+	 if(current == readyfront){
+		 if(current->next == NULL){
+			 readyfront = NULL;
+			 readyrear = NULL;
+		 }
+		 else{
+			 readyfront = current->next;
+			 current->next=NULL;
+			 Toppriority = readyfront->Priority;
+		 }
+			 
+	 }
+	 else{
+		 if(current->next == NULL){
+			 while(head->next!=current)
+				 head=head->next;
+			 head->next=NULL;
+		 }
+		 else{
+			 while(head->next!=current)
+				 head=head->next;
+			 head->next=current->next;
+			 current->next = NULL;
+		 }
+	 }
+	 Running = current;
+	 NextRunning = readyfront;
+
+	 
+}
+void dispatcher(){
+	PCB *head;
+	while(readyfront==NULL&&readyrear==NULL)
+	{CALL(Z502Idle());}
+	
+		os_out_ready(readyfront);
+		printf("\n");
+		printf("cunrrent running pid %d\n",Running->pid);
+		printf("\n");
+
+		head = readyfront;
+		printf("readyqueue:");
+		while(head!=NULL){
+			
+			printf("%d(%d)\t",head->pid,head->Priority);
+			head=head->next;
+		}
+		printf("\n");
+		printf("\n");
+		head = timerfront;
+		printf("timerqueue:");
+		while(head!=NULL){
+			
+			printf("%d(%d)\t",head->pid,head->Priority);
+			
+			head=head->next;
+		}
+		printf("\n");
+		printf("\n");
+		head=diskfront;
+		printf("suspendqueue:");
+			while(head!=NULL){
+				printf("%d(%d)\t",head->pid,head->Priority);
+				head=head->next;
+
+			}
+		printf("\n");
+		printf("\n");
+}
 void return_readyQ(PCB *pcb){
      PCB *head = readyfront;
 	 PCB *head1 = readyfront;
@@ -227,38 +306,7 @@ void return_readyQ(PCB *pcb){
 			 }
 		 }
  }
- void os_out_ready(PCB *current){
-	 PCB *head = readyfront;
-	 if(current == readyfront){
-		 if(current->next == NULL){
-			 readyfront = NULL;
-			 readyrear = NULL;
-		 }
-		 else{
-			 readyfront = current->next;
-			 current->next=NULL;
-			 Toppriority = readyfront->Priority;
-		 }
-			 
-	 }
-	 else{
-		 if(current->next == NULL){
-			 while(head->next!=current)
-				 head=head->next;
-			 head->next=NULL;
-		 }
-		 else{
-			 while(head->next!=current)
-				 head=head->next;
-			 head->next=current->next;
-			 current->next = NULL;
-		 }
-	 }
-	 Running = current;
-	 NextRunning = readyfront;
-
-	 
-}
+ 
  void os_out_disk(PCB *pcb){
 	 PCB *head = diskfront;
 	 if(pcb == diskfront){
@@ -290,6 +338,26 @@ void return_readyQ(PCB *pcb){
 	 }
 	 return_readyQ(pcb);
 	 return;
+ }
+ void remove_pcb_by_diskID(int ID){
+	 PCB *head = diskfront;
+	 while(head!=NULL){
+		 if(head->disk_id == ID){
+			 break;
+		 }
+		 head = head->next;
+	 }
+
+	 if(head!=NULL){
+		 os_out_disk(head);
+	 } 
+	 else{
+		/* return_readyQ(Running);
+		 Running = NULL;
+		 dispatcher();
+		  Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &(Running->context) );*/
+
+	 }
  }
  void add_to_timerQ(){
 	 PCB *head = timerfront;
@@ -768,13 +836,7 @@ int os_get_process_id(char *name){
 	 Z502_REG9++;}
  }
 //create process;    
-void dispatcher(){
-	while(readyfront==NULL&&readyrear==NULL)
-	{CALL(Z502Idle());}
-	
-		os_out_ready(readyfront);
 
-}
  void disk_read(long disk_id,long sector_id,char* read_buffer)
  {
 	                    INT32 diskstatus;
@@ -782,33 +844,33 @@ void dispatcher(){
                         MEM_READ(Z502DiskStatus, &diskstatus);
                         if (diskstatus == DEVICE_FREE)  {      // Disk hasn't been used - should be free
                                
-                        MEM_WRITE(Z502DiskSetSector, &sector_id);
-                        MEM_WRITE(Z502DiskSetBuffer, (INT32*)read_buffer);
-                        diskstatus = 0;                        // Specify a read
-                        MEM_WRITE(Z502DiskSetAction, &diskstatus);
-                        diskstatus = 0;                        // Must be set to 0
-                        MEM_WRITE(Z502DiskStart, &diskstatus);
-                        MEM_WRITE(Z502DiskSetID, &disk_id);
-                        MEM_READ(Z502DiskStatus, &diskstatus);
-                        while (diskstatus != DEVICE_FREE) 
-                        {
-                                Z502Idle();
-                                MEM_READ(Z502DiskStatus, &diskstatus);
-                        }
-						return_readyQ(Running);
-						Running = NULL;
-						dispatcher();
-						Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &(Running->context) );
+                        
 						}
-						else if(diskstatus == DEVICE_IN_USE){
+					 if(diskstatus == DEVICE_IN_USE){
+						 Running->disk_id = disk_id;
 							add_to_diskQ(Running);
 							Running = NULL;
 							dispatcher();
 							Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &(Running->context) );
 						}
-						else{
-							printf("something wrong here!\n");
-						}
+						MEM_WRITE(Z502DiskSetSector, &sector_id);
+                        MEM_WRITE(Z502DiskSetBuffer, (INT32*)read_buffer);
+                        diskstatus = 0;                        // Specify a read
+                        MEM_WRITE(Z502DiskSetAction, &diskstatus);
+                        diskstatus = 0;                        // Must be set to 0
+                        MEM_WRITE(Z502DiskStart, &diskstatus);
+                       /* MEM_WRITE(Z502DiskSetID, &disk_id);
+                        MEM_READ(Z502DiskStatus, &diskstatus);
+                        while (diskstatus != DEVICE_FREE) 
+                        {
+                                Z502Idle();
+                                MEM_READ(Z502DiskStatus, &diskstatus);
+                        }*/
+						Running->disk_id = disk_id;
+						return_readyQ(Running);
+						Running = NULL;
+						dispatcher();
+						Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &(Running->context) );
  }
  void disk_write(long disk_id,long sector_id,char* write_buffer){
 	 /* Do the hardware call to put data on disk */
@@ -817,34 +879,34 @@ void dispatcher(){
 	     MEM_READ(Z502DiskStatus, &diskstatus);
 	     if (diskstatus == DEVICE_FREE) {       // Disk hasn't been used - should be free
 		  
-	     MEM_WRITE(Z502DiskSetSector, &sector_id);
+	    
+		 }
+		 if(diskstatus == DEVICE_IN_USE){
+			                Running->disk_id = disk_id;
+			                add_to_diskQ(Running);
+							Running = NULL;
+							dispatcher();
+							Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &(Running->context) );
+		 }
+		  MEM_WRITE(Z502DiskSetSector, &sector_id);
 	     MEM_WRITE(Z502DiskSetBuffer, (INT32 * )write_buffer);
 	      diskstatus = 1;                        // Specify a write
 	     MEM_WRITE(Z502DiskSetAction, &diskstatus);
 	       diskstatus = 0;                        // Must be set to 0
 	     MEM_WRITE(Z502DiskStart, &diskstatus);
 	// Disk should now be started - let's see
-	     MEM_WRITE(Z502DiskSetID, &disk_id);
+	    /* MEM_WRITE(Z502DiskSetID, &disk_id);
 	     MEM_READ(Z502DiskStatus, &diskstatus);
 	     while (diskstatus != DEVICE_FREE) {
 		   Z502Idle();
 		   MEM_READ(Z502DiskStatus, &diskstatus);
-		 }
+		 }*/
+		 Running->disk_id = disk_id;
 		 return_readyQ(Running);
 		 Running = NULL;
 		 dispatcher();
 		 Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &(Running->context) );
-		 }
-		 else if(diskstatus == DEVICE_IN_USE){
-			 add_to_diskQ(Running);
-							Running = NULL;
-							dispatcher();
-							Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &(Running->context) );
-		 }
-		 else{
-			 printf("something wrong here!\n");
-						
-		 }
+		 
  }
 void os_create_process( char* process_name, void* scontext, long Prio ) {
         void                *next_context;
@@ -884,38 +946,7 @@ void start_timer( int delaytime ){
         Running->wakeuptime = Time+Temp;
 		add_to_timerQ();
 	    dispatcher();
-		printf("\n");
-		printf("cunrrent running pid %d\n",Running->pid);
-		printf("\n");
-
-		head = readyfront;
-		printf("readyqueue:");
-		while(head!=NULL){
-			
-			printf("%d(%d)\t",head->pid,head->Priority);
-			head=head->next;
-		}
-		printf("\n");
-		printf("\n");
-		head = timerfront;
-		printf("timerqueue:");
-		while(head!=NULL){
-			
-			printf("%d(%d)\t",head->pid,head->Priority);
-			
-			head=head->next;
-		}
-		printf("\n");
-		printf("\n");
-		head=suspendfront;
-		printf("suspendqueue:");
-			while(head!=NULL){
-				printf("%d(%d)\t",head->pid,head->Priority);
-				head=head->next;
-
-			}
-		printf("\n");
-		printf("\n");
+		
 	   //READ_MODIFY(MEMORY_INTERLOCK_BASE, DO_UNLOCK, SUSPEND_UNTIL_LOCKED,&LockResult);
 	   if(Running != NULL){
 		   Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &(Running->context) );
@@ -947,7 +978,7 @@ void    interrupt_handler( void ) {
     static INT32       how_many_interrupt_entries = 0;    /** TEMP **/
 	int                current_time;
 	int                newtime;
-	
+	int               diskid;
     // Get cause of interrupt
     MEM_READ(Z502InterruptDevice, &device_id );
     // Set this device as target of our query
@@ -956,11 +987,26 @@ void    interrupt_handler( void ) {
     MEM_READ(Z502InterruptStatus, &status );
 
     /** REMOVE THE NEXT SIX LINES **/
-	//tempPCB = timerfront;
-	while(diskfront!=NULL){
-		os_out_disk(diskfront);
+   //tempPCB = timerfront;
+	diskid = device_id - 4;
+	switch(device_id){
 
-	}
+	case  DISK_INTERRUPT_DISK1:
+	  if(diskfront!=NULL){
+		remove_pcb_by_diskID(diskid);
+      }
+	break;
+	case DISK_INTERRUPT_DISK2:
+		  if(diskfront!=NULL){
+		remove_pcb_by_diskID(diskid);
+      }
+	break;
+	case  DISK_INTERRUPT_DISK3:
+		 if(diskfront!=NULL){
+		remove_pcb_by_diskID(diskid);
+      }
+	break;
+	case TIMER_INTERRUPT :
 	while(timerfront!=NULL){
 	MEM_READ(Z502ClockStatus, &current_time);
     if(current_time > NextInterruptTime)
@@ -973,14 +1019,16 @@ void    interrupt_handler( void ) {
 		newtime = timerfront->wakeuptime - current_time;
 		MEM_WRITE( Z502TimerStart, &newtime);
 	}
-	
+	break;
+	}
 	 //return_readyQ(tempPCB);
 }                                       /* End of interrupt_handler */
 /************************************************************************
     FAULT_HANDLER
         The beginning of the OS502.  Used to receive hardware faults.
 ************************************************************************/
-
+void init_disk(){
+}
 void    fault_handler( void )
     {
     INT32       device_id;
