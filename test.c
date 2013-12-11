@@ -1533,7 +1533,8 @@ void test2e(void) {
 		if (Z502_REG2 != Z502_REG1) // Written = read?
 			printf("AN ERROR HAS OCCURRED.\n");
 
-	}    // End of for loop
+	}
+	TERMINATE_PROCESS(-2, &Z502_REG5);// End of for loop
 }                                  // End of test2e    
 
 /**************************************************************************
@@ -1556,65 +1557,65 @@ void test2e(void) {
 #define                 LOGICAL_PAGES_TO_TOUCH       2 * PHYS_MEM_PGS
 
 typedef struct {
-	INT16 page_touched[LOGICAL_PAGES_TO_TOUCH];
+    INT16 page_touched[LOOP_COUNT];   // Bugfix Rel 4.03  12/1/2013
 } MEMORY_TOUCHED_RECORD;
 
 void test2f(void) {
-	MEMORY_TOUCHED_RECORD *mtr;
-	short Iterations, Index, Loops;
+    MEMORY_TOUCHED_RECORD *mtr;
+    short Iterations, Index, Loops;
 
-	mtr = (MEMORY_TOUCHED_RECORD *) calloc(1, sizeof(MEMORY_TOUCHED_RECORD));
+    mtr = (MEMORY_TOUCHED_RECORD *) calloc(1, sizeof(MEMORY_TOUCHED_RECORD));
 
-	GET_PROCESS_ID("", &Z502_REG4, &Z502_REG9);
-	printf("\n\nRelease %s:Test 2f: Pid %ld\n", CURRENT_REL, Z502_REG4);
+    GET_PROCESS_ID("", &Z502_REG4, &Z502_REG9);
+    printf("\n\nRelease %s:Test 2f: Pid %ld\n", CURRENT_REL, Z502_REG4);
 
-	for (Iterations = 0; Iterations < NUMBER_OF_ITERATIONS; Iterations++) {
-		for (Index = 0; Index < LOGICAL_PAGES_TO_TOUCH; Index++)
-			mtr->page_touched[Index] = 0;
-		for (Loops = 0; Loops < LOOP_COUNT; Loops++) {
-			// Get a random page number
-			get_skewed_random_number(&Z502_REG7, LOGICAL_PAGES_TO_TOUCH);
-			Z502_REG3 = PGSIZE * Z502_REG7; // Convert page to addr.
-			Z502_REG1 = Z502_REG3 + Z502_REG4;   // Generate data for page
-			MEM_WRITE(Z502_REG3, &Z502_REG1);
-			// Write it again, just as a test
-			MEM_WRITE(Z502_REG3, &Z502_REG1);
+    for (Iterations = 0; Iterations < NUMBER_OF_ITERATIONS; Iterations++) {
+        for (Index = 0; Index < LOOP_COUNT; Index++)   // Bugfix Rel 4.03  12/1/2013
+            mtr->page_touched[Index] = 0;
+        for (Loops = 0; Loops < LOOP_COUNT; Loops++) {
+            // Get a random page number
+            get_skewed_random_number(&Z502_REG7, LOGICAL_PAGES_TO_TOUCH);
+            Z502_REG3 = PGSIZE * Z502_REG7; // Convert page to addr.
+            Z502_REG1 = Z502_REG3 + Z502_REG4;   // Generate data for page
+            MEM_WRITE(Z502_REG3, &Z502_REG1);
+            // Write it again, just as a test
+            MEM_WRITE(Z502_REG3, &Z502_REG1);
 
-			// Read it back and make sure it's the same
-			MEM_READ(Z502_REG3, &Z502_REG2);
-			if (Loops % DISPLAY_GRANULARITY2 == 0)
-				printf("PID= %ld  address= %ld   written= %ld   read= %ld\n",
-						Z502_REG4, Z502_REG3, Z502_REG1, Z502_REG2);
-			if (Z502_REG2 != Z502_REG1)
-				printf("AN ERROR HAS OCCURRED: READ NOT EQUAL WRITE.\n");
+            // Read it back and make sure it's the same
+            MEM_READ(Z502_REG3, &Z502_REG2);
+            if (Loops % DISPLAY_GRANULARITY2 == 0)
+                printf("PID= %ld  address= %ld   written= %ld   read= %ld\n",
+                        Z502_REG4, Z502_REG3, Z502_REG1, Z502_REG2);
+            if (Z502_REG2 != Z502_REG1)
+                printf("AN ERROR HAS OCCURRED: READ NOT EQUAL WRITE.\n");
 
-			// Record in our data-base that we've accessed this page
-			mtr->page_touched[(short) Loops] = Z502_REG7;
+            // Record in our data-base that we've accessed this page
+            mtr->page_touched[(short) Loops] = Z502_REG7;
 
-		}   // End of for Loops
+        }   // End of for Loops
 
-		for (Loops = 0; Loops < LOOP_COUNT; Loops++) {
+        for (Loops = 0; Loops < LOOP_COUNT; Loops++) {
 
-			// We can only read back from pages we've previously
-			// written to, so find out which pages those are.
-			Z502_REG6 = mtr->page_touched[(short) Loops];
-			Z502_REG3 = PGSIZE * Z502_REG6; // Convert page to addr.
-			Z502_REG1 = Z502_REG3 + Z502_REG4; // Expected read
-			MEM_READ(Z502_REG3, &Z502_REG2);
+            // We can only read back from pages we've previously
+            // written to, so find out which pages those are.
+            Z502_REG6 = mtr->page_touched[(short) Loops];
+            Z502_REG3 = PGSIZE * Z502_REG6; // Convert page to addr.
+            Z502_REG1 = Z502_REG3 + Z502_REG4; // Expected read
+            MEM_READ(Z502_REG3, &Z502_REG2);
 
-			if (Loops % DISPLAY_GRANULARITY2 == 0)
-				printf("PID= %ld  address= %ld   written= %ld   read= %ld\n",
-						Z502_REG4, Z502_REG3, Z502_REG1, Z502_REG2);
-			if (Z502_REG2 != Z502_REG1)
-				printf("ERROR HAS OCCURRED: READ NOT SAME AS WRITE.\n");
-		}   // End of for Loops
+            if (Loops % DISPLAY_GRANULARITY2 == 0)
+                printf("PID= %ld  address= %ld   written= %ld   read= %ld\n",
+                        Z502_REG4, Z502_REG3, Z502_REG1, Z502_REG2);
+            if (Z502_REG2 != Z502_REG1)
+                printf("ERROR HAS OCCURRED: READ NOT SAME AS WRITE.\n");
+        }   // End of for Loops
 
-		// We've completed reading back everything
-		printf("TEST 2f, PID %ld, HAS COMPLETED %d ITERATIONS\n", Z502_REG4,
-				Iterations);
-	}   // End of for Iterations
+        // We've completed reading back everything
+        printf("TEST 2f, PID %ld, HAS COMPLETED %d ITERATIONS\n", Z502_REG4,
+                Iterations);
+    }   // End of for Iterations
 
-	TERMINATE_PROCESS(-1, &Z502_REG9);
+    TERMINATE_PROCESS(-1, &Z502_REG9);
 
 }                                 // End of test2f
 

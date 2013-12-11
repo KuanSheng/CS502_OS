@@ -52,10 +52,12 @@ int                 Toppriority;
 int                 maxbuffer = 0;
 int                 actual_length;
 int                 msgnum;
-INT32 LockResult;
+int                 FrameAllUsed = 0;
+INT32 LockResult, LockResult2, LockResultPrinter, TimeLockResult;
 #define                  DO_LOCK                     1
 #define                  DO_UNLOCK                   0
 #define                  SUSPEND_UNTIL_LOCKED        TRUE
+#define                  FrameFree                 0
 extern void          *TO_VECTOR [];
 
 char                 *call_names[] = { "mem_read ", "mem_write",
@@ -64,7 +66,7 @@ char                 *call_names[] = { "mem_read ", "mem_write",
                             "suspend  ", "resume   ", "ch_prior ",
                             "send     ", "receive  ", "disk_read",
                             "disk_wrt ", "def_sh_ar" };
-
+char MEMORY[PHYS_MEM_PGS * PGSIZE ];
 
 /************************************************************************
     INTERRUPT_HANDLER
@@ -107,6 +109,13 @@ typedef struct Disk{
         PCB *PCB;
         struct Disk *next;
 }Disk;
+typedef struct Shadow{
+	 UINT16 framenumber;
+	 long diskID;
+	 long sectorID;
+	 UINT16 pagenumber;
+	 int  status;
+}Shadow;
 //initialnize some queue here
  PCB *readyfront = NULL;
  PCB *readyrear = NULL;
@@ -127,6 +136,8 @@ typedef struct Disk{
  Frame *framefront;
  Frame *framerear;
 
+ Shadow shadowTBL[1024];
+ Frame frame[64];
 int checkPCBname(PCB *pcbc){
 	       int i = 1;
 	       PCB *head = readyfront;
@@ -227,7 +238,7 @@ void dispatcher(){
 	{CALL(Z502Idle());}
 	
 		os_out_ready(readyfront);
-		printf("\n");
+		/*printf("\n");
 		printf("cunrrent running pid %d\n",Running->pid);
 		printf("\n");
 
@@ -258,7 +269,9 @@ void dispatcher(){
 
 			}
 		printf("\n");
-		printf("\n");
+		printf("\n");*/
+		if(Running!=NULL){
+			Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &(Running->context) );}
 }
 void return_readyQ(PCB *pcb){
      PCB *head = readyfront;
@@ -850,8 +863,11 @@ int os_get_process_id(char *name){
 						 Running->disk_id = disk_id;
 							add_to_diskQ(Running);
 							Running = NULL;
+							 
 							dispatcher();
-							Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &(Running->context) );
+							/*Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &(Running->context) );*/
+							MEM_WRITE(Z502DiskSetID, &disk_id);
+                            MEM_READ(Z502DiskStatus, &diskstatus);
 						}
 						MEM_WRITE(Z502DiskSetSector, &sector_id);
                         MEM_WRITE(Z502DiskSetBuffer, (INT32*)read_buffer);
@@ -870,7 +886,7 @@ int os_get_process_id(char *name){
 						return_readyQ(Running);
 						Running = NULL;
 						dispatcher();
-						Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &(Running->context) );
+						/*Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &(Running->context) );*/
  }
  void disk_write(long disk_id,long sector_id,char* write_buffer){
 	 /* Do the hardware call to put data on disk */
@@ -886,7 +902,9 @@ int os_get_process_id(char *name){
 			                add_to_diskQ(Running);
 							Running = NULL;
 							dispatcher();
-							Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &(Running->context) );
+							/*Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &(Running->context) );*/
+							MEM_WRITE(Z502DiskSetID, &disk_id);
+                           MEM_READ(Z502DiskStatus, &diskstatus);
 		 }
 		  MEM_WRITE(Z502DiskSetSector, &sector_id);
 	     MEM_WRITE(Z502DiskSetBuffer, (INT32 * )write_buffer);
@@ -905,7 +923,7 @@ int os_get_process_id(char *name){
 		 return_readyQ(Running);
 		 Running = NULL;
 		 dispatcher();
-		 Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &(Running->context) );
+		 /*Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &(Running->context) );*/
 		 
  }
 void os_create_process( char* process_name, void* scontext, long Prio ) {
@@ -948,10 +966,8 @@ void start_timer( int delaytime ){
 	    dispatcher();
 		
 	   //READ_MODIFY(MEMORY_INTERLOCK_BASE, DO_UNLOCK, SUSPEND_UNTIL_LOCKED,&LockResult);
-	   if(Running != NULL){
-		   Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &(Running->context) );
-	   }
-	   else
+	   
+	   if(Running == NULL)
 	   {CALL(Z502Idle());}
 		//Z502Idle();
 
@@ -968,6 +984,7 @@ Frame* get_free_frame(){
 			head = head->next;
 	}
 
+	FrameAllUsed = 1;
 	return NULL;
 }
 void    interrupt_handler( void ) {
@@ -979,6 +996,8 @@ void    interrupt_handler( void ) {
 	int                current_time;
 	int                newtime;
 	int               diskid;
+	INT32 diskstatus;
+	
     // Get cause of interrupt
     MEM_READ(Z502InterruptDevice, &device_id );
     // Set this device as target of our query
@@ -989,20 +1008,22 @@ void    interrupt_handler( void ) {
     /** REMOVE THE NEXT SIX LINES **/
    //tempPCB = timerfront;
 	diskid = device_id - 4;
+	MEM_WRITE(Z502DiskSetID, &diskid);
+	MEM_READ(Z502DiskStatus, &diskstatus);
 	switch(device_id){
 
 	case  DISK_INTERRUPT_DISK1:
-	  if(diskfront!=NULL){
+	  if(diskfront!=NULL&&diskstatus == DEVICE_FREE){
 		remove_pcb_by_diskID(diskid);
       }
 	break;
 	case DISK_INTERRUPT_DISK2:
-		  if(diskfront!=NULL){
+		  if(diskfront!=NULL&&diskstatus == DEVICE_FREE){
 		remove_pcb_by_diskID(diskid);
       }
 	break;
 	case  DISK_INTERRUPT_DISK3:
-		 if(diskfront!=NULL){
+		 if(diskfront!=NULL&&diskstatus == DEVICE_FREE){
 		remove_pcb_by_diskID(diskid);
       }
 	break;
@@ -1027,7 +1048,18 @@ void    interrupt_handler( void ) {
     FAULT_HANDLER
         The beginning of the OS502.  Used to receive hardware faults.
 ************************************************************************/
-void init_disk(){
+void shadowinit(){
+	int i;
+	for(i=0;i<1024;i++){
+		shadowTBL[i].status = 0;
+	}
+}
+void frameinit(){
+	int i;
+	for(i=0;i<64;i++){
+		frame[i].framenumber = i;
+		frame[i].framestatus = 0;
+	}
 }
 void    fault_handler( void )
     {
@@ -1035,6 +1067,12 @@ void    fault_handler( void )
     INT32       status;
     INT32       Index = 0;
 	Frame       *f;
+	int          i;
+	int          victim=0;
+	int          diskid;
+	UINT16       pagenum;
+	UINT16       framenum;
+	UINT16       sectorID;
 
     // Get cause of interrupt
     MEM_READ(Z502InterruptDevice, &device_id );
@@ -1043,8 +1081,10 @@ void    fault_handler( void )
     // Now read the status of this device
     MEM_READ(Z502InterruptStatus, &status );
 
-    printf( "Fault_handler: Found vector type %d with value %d\n",
-                        device_id, status );
+   /* printf( "Fault_handler: Found vector type %d with value %d\n",
+                        device_id, status );*/
+	diskid = 1;
+	if(device_id!=4){
 	if(status>=1024){
 		printf("page overflow!\n");
 		Z502Halt();
@@ -1053,16 +1093,51 @@ void    fault_handler( void )
 	Z502_PAGE_TBL_LENGTH = 1024;
 	Z502_PAGE_TBL_ADDR = (UINT16 *) calloc(sizeof(UINT16),
 		Z502_PAGE_TBL_LENGTH);}
-	//here we initialize the page table
-	f = get_free_frame();
-	if(f != NULL){
-		f->pid = Running->pid;
-		f->pagenumber = status;
-		f->framenumber = 1;
-		Z502_PAGE_TBL_ADDR[f->pagenumber] = (UINT16)f->framenumber | 0x8000;
-		
-	}
 
+	//here we initialize the page table
+	//f = get_free_frame();
+	if(FrameAllUsed != 1){
+		for(i=0;i<64;i++){
+			if(frame[i].framestatus == 0){
+				frame[i].pagenumber = status;
+				frame[i].framestatus =1;
+				frame[i].pid = Running->pid;
+			Z502_PAGE_TBL_ADDR[frame[i].pagenumber] = (UINT16)frame[i].framenumber | 0x8000;
+			break;
+			}
+		
+		}
+		if(i == 64)
+			FrameAllUsed = 1;
+	}
+	else{
+		i = victim;
+		framenum = frame[i].framenumber;
+		pagenum = frame[i].pagenumber;
+		sectorID = pagenum;
+		Z502_PAGE_TBL_ADDR[frame[i].pagenumber] = Z502_PAGE_TBL_ADDR[frame[i].pagenumber] & 0x7FFF;
+
+		if(shadowTBL[pagenum].status == 0){
+			shadowTBL[pagenum].framenumber = framenum;
+			shadowTBL[pagenum].diskID = diskid;
+			shadowTBL[pagenum].sectorID = sectorID;
+			shadowTBL[pagenum].status = 1;
+			disk_write(shadowTBL[pagenum].diskID, shadowTBL[pagenum].sectorID,(char *)&MEMORY[shadowTBL[pagenum].framenumber * PGSIZE]);
+		}
+		 
+		if(shadowTBL[status].status == 1){
+			shadowTBL[status].status = 0;
+			disk_read(shadowTBL[status].diskID, shadowTBL[status].sectorID,(char *)&MEMORY[shadowTBL[status].framenumber * PGSIZE]);
+		}
+
+		 Z502_PAGE_TBL_ADDR[status] = (UINT16)framenum | 0x8000;
+		 frame[i].pagenumber = status;
+		 frame[i].pid = Running->pid;
+		 frame[i].framestatus = 1;
+		 victim = (victim + 1) % 64;
+	}
+	
+	}
 
 	if(device_id==4&&status==0){
 		Z502Halt();
@@ -1466,6 +1541,8 @@ void    osInit( int argc, char *argv[]  ) {
 		frameindex++;
 	}
 
+	shadowinit();
+	frameinit();
     /* Demonstrates how calling arguments are passed thru to here       */
 
     printf( "Program called with %d arguments:", argc );
@@ -1547,6 +1624,15 @@ void    osInit( int argc, char *argv[]  ) {
 		}
 		else if(strcmp(test,"test2d")==0){
 			Z502MakeContext( &next_context, (void *)test2d, USER_MODE );
+		}
+		else if(strcmp(test,"test2e")==0){
+			Z502MakeContext( &next_context, (void *)test2e, USER_MODE );
+		}
+		else if(strcmp(test,"test2f")==0){
+			Z502MakeContext( &next_context, (void *)test2f, USER_MODE );
+		}
+		else if(strcmp(test,"test2g")==0){
+			Z502MakeContext( &next_context, (void *)test2g, USER_MODE );
 		}
     //Z502MakeContext( &next_context, (void *)test1e, USER_MODE );
 	pcb->context = next_context;
